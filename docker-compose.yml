@@ -1,0 +1,90 @@
+# Postgres credentials below are ${VAR}-interpolated from backend/.env, not
+# hardcoded here. Compose only auto-loads a .env from the project root, not
+# backend/.env, so run compose with an explicit --env-file to make backend/.env
+# control them (the `backend` service also loads backend/.env directly via its
+# own `env_file:` entry below, independent of this flag):
+#   docker compose --env-file backend/.env build
+#   docker compose --env-file backend/.env up
+# Without --env-file, each ${VAR:-default} falls back to the same dev-only
+# values backend/.env.example ships, so compose still works — it just won't
+# be reading your customized credentials.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-realestate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-realestate-dev-only}
+      POSTGRES_DB: ${POSTGRES_DB:-realestate}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-realestate} -d ${POSTGRES_DB:-realestate}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6381:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    # NOT CONSUMED BY ANY CODE YET. Target-architecture use (per
+    # core-components.md and CLAUDE.md's Scaling Mindset) is session/cache
+    # once JWT-stateless auth needs shared state across instances — the MVP
+    # scoping checkpoint (Documentation/audits/2026-08-05-mvp-scoping-and-
+    # tool-contracts.md) explicitly deferred this. Present now so a later
+    # phase that needs it doesn't also need an infra change; safe to remove
+    # if it never gets wired up.
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../infra/backend/Dockerfile
+    env_file:
+      - ./backend/.env
+    environment:
+      # Overrides backend/.env's SQLite default (sqlite:///./app.db) for the
+      # containerized environment. Non-Docker local dev (`uv run uvicorn`)
+      # still defaults to SQLite via backend/.env.example — this override is
+      # compose-only. Built from the same POSTGRES_* vars as the postgres
+      # service above (see the --env-file note at the top of this file), so
+      # credentials only ever need to change in backend/.env. NOT YET
+      # CONSUMED: app/db/session.py (task B4, Phase 1) is what actually opens
+      # a connection; the driver (psycopg, added to backend/pyproject.toml)
+      # is installed ahead of that landing. Adjust the +psycopg dialect here
+      # if Phase 1 picks a different driver (e.g. +asyncpg for an async
+      # engine).
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-realestate}:${POSTGRES_PASSWORD:-realestate-dev-only}@postgres:5432/${POSTGRES_DB:-realestate}
+      # NOT YET CONSUMED — no Settings field reads this (see the redis
+      # service note above); present for the same forward-readiness reason.
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # frontend: the admin SPA (frontend/admin, Vite + React) gets its own service here
+  # once task F1 scaffolds it — build context ./frontend/admin, served on 5173 in dev,
+  # and CORS_ALLOWED_ORIGINS in backend/.env must list its origin explicitly ('*' is
+  # rejected at config validation because cookie auth is credentialed).
+
+volumes:
+  postgres_data:
