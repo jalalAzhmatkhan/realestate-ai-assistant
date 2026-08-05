@@ -793,6 +793,32 @@ Availability resolution and conflict detection call `app/booking/slots.py`, the 
 `BookViewing` and the REST reschedule endpoint call; this tool adds booking resolution and RBAC
 re-authorization on top of it, never a second conflict implementation.
 
+**Booking resolution** (all three identifying fields are optional — the LLM rarely knows an internal
+`booking_id`, and the tool set is closed at five, so there is no lookup tool to call first). Within the
+caller's RBAC scope only: an explicit `booking_id` is looked up directly; otherwise the caller's
+`confirmed`, future bookings are filtered by whichever of `property_id`/`current_slot_time` were
+supplied, or returned outright if neither was given. Exactly one match proceeds; zero matches ->
+`booking_not_found`; more than one -> `booking_ambiguous`. The resolver *is* the authorization
+boundary — it never searches outside `ctx.deps.user`'s scope, so an out-of-scope `booking_id` is
+indistinguishable from a nonexistent one, same as the REST endpoint (this matters more here since the
+ID is LLM-generated and a distinguishable "forbidden" would let a user enumerate booking IDs via chat).
+
+**Failure modes** (raised as `ToolError`s, not surfaced raw): `booking_not_found` (no match in scope,
+incl. out-of-scope `booking_id`) -> orchestrator apologizes, may suggest `EscalateToHuman`;
+`booking_ambiguous` (+ `candidates: [{booking_id, property_title, slot_time}]`, capped at 5, no client
+names/emails/contact details) -> orchestrator **must ask the user which booking they mean**;
+`booking_not_reschedulable` (cancelled or already-past booking); `slot_time_in_past` /
+`slot_unchanged` -> validation error; `slot_unavailable` / `booking_slot_conflict` (+
+`suggested_alternatives`, same shape `BookViewing` returns).
+
+> **Safety-critical, not optional:** on `booking_ambiguous`, the model must ask the user to disambiguate
+> and must **never** auto-select a candidate (e.g. retry with `candidates[0]`) — doing so would silently
+> reschedule the wrong person's viewing. This has to be enforced via the tool description and system
+> prompt text, **not** via code that inspects the model's next tool call, which would be exactly the
+> pre-classification routing layer `CLAUDE.md` forbids as a hard constraint. Whoever authors the system
+> prompt owns this — see `Documentation/audits/2026-08-05-reschedule-viewing-tool-contract.md` decision
+> #8 for the full reasoning and the QA assertion this needs.
+
 **Booking identification — stated ambiguity and its assumed resolution.** A chat user says "move my
 Saturday viewing to Monday afternoon." They do not know internal booking IDs, and the tool set is
 closed at five, so there is no `list_my_bookings` tool for the model to call first. **Resolution: all
