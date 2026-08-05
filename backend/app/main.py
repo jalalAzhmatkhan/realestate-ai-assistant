@@ -1,22 +1,33 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth
+from app.agent.deps import AgentDeps
+from app.api import auth, chat
 from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.revocation import RedisTokenDenylist, TokenDenylist
 from app.db.seed import seed_if_empty
 from app.db.session import build_engine
+from app.notifications.port import NotificationPort
+from app.rag.index import FaqIndex
+
+if TYPE_CHECKING:
+    from pydantic_ai import Agent
 
 API_V1_PREFIX = "/api/v1"
 
 
 def create_app(
-    settings: Settings | None = None, token_denylist: TokenDenylist | None = None
+    settings: Settings | None = None,
+    token_denylist: TokenDenylist | None = None,
+    agent: "Agent[AgentDeps, str] | None" = None,
+    faq_index: FaqIndex | None = None,
+    notifier: NotificationPort | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings)
@@ -50,6 +61,15 @@ def create_app(
     app.state.engine = build_engine(settings)
     app.state.token_denylist = token_denylist or RedisTokenDenylist.from_url(settings.redis_url)
 
+    # None means "build on first chat request" (app/api/chat.py). Deliberately not built
+    # here: constructing the model requires an LLM API key, and the whole REST/auth
+    # surface must boot and serve without one. A test injects a FunctionModel-backed
+    # agent (and a TestEmbeddingModel-backed index) so the tool-calling loop runs with no
+    # network at all.
+    app.state.agent = agent
+    app.state.faq_index = faq_index
+    app.state.notifier = notifier
+
     # Order matters: the catch-all registered here must end up *inside* CORSMiddleware
     # so its 500 responses still flow out through CORS header injection.
     register_exception_handlers(app)
@@ -63,6 +83,7 @@ def create_app(
     )
 
     app.include_router(auth.router, prefix=API_V1_PREFIX)
+    app.include_router(chat.router, prefix=API_V1_PREFIX)
 
     # Operational endpoint for container/orchestrator health probes — deliberately
     # outside /api/v1 and outside the README's API surface contract.
