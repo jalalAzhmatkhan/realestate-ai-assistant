@@ -1,18 +1,26 @@
+# Postgres credentials below are ${VAR}-interpolated from backend/.env, not
+# hardcoded here. Compose only auto-loads a .env from the project root, not
+# backend/.env, so run compose with an explicit --env-file to make backend/.env
+# control them (the `backend` service also loads backend/.env directly via its
+# own `env_file:` entry below, independent of this flag):
+#   docker compose --env-file backend/.env build
+#   docker compose --env-file backend/.env up
+# Without --env-file, each ${VAR:-default} falls back to the same dev-only
+# values backend/.env.example ships, so compose still works — it just won't
+# be reading your customized credentials.
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      # Dev-only credentials, matching the JWT_SECRET_KEY=dev-only-change-me
-      # convention in backend/.env.example. Not used outside local Docker dev.
-      POSTGRES_USER: realestate
-      POSTGRES_PASSWORD: realestate-dev-only
-      POSTGRES_DB: realestate
+      POSTGRES_USER: ${POSTGRES_USER:-realestate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-realestate-dev-only}
+      POSTGRES_DB: ${POSTGRES_DB:-realestate}
     ports:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U realestate -d realestate"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-realestate} -d ${POSTGRES_DB:-realestate}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -46,12 +54,15 @@ services:
       # Overrides backend/.env's SQLite default (sqlite:///./app.db) for the
       # containerized environment. Non-Docker local dev (`uv run uvicorn`)
       # still defaults to SQLite via backend/.env.example — this override is
-      # compose-only. NOT YET CONSUMED: app/db/session.py (task B4, Phase 1)
-      # is what actually opens a connection; the driver (psycopg, added to
-      # backend/pyproject.toml) is installed ahead of that landing. Adjust
-      # the +psycopg dialect here if Phase 1 picks a different driver (e.g.
-      # +asyncpg for an async engine).
-      DATABASE_URL: postgresql+psycopg://realestate:realestate-dev-only@postgres:5432/realestate
+      # compose-only. Built from the same POSTGRES_* vars as the postgres
+      # service above (see the --env-file note at the top of this file), so
+      # credentials only ever need to change in backend/.env. NOT YET
+      # CONSUMED: app/db/session.py (task B4, Phase 1) is what actually opens
+      # a connection; the driver (psycopg, added to backend/pyproject.toml)
+      # is installed ahead of that landing. Adjust the +psycopg dialect here
+      # if Phase 1 picks a different driver (e.g. +asyncpg for an async
+      # engine).
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-realestate}:${POSTGRES_PASSWORD:-realestate-dev-only}@postgres:5432/${POSTGRES_DB:-realestate}
       # NOT YET CONSUMED — no Settings field reads this (see the redis
       # service note above); present for the same forward-readiness reason.
       REDIS_URL: redis://redis:6379/0
