@@ -1,0 +1,58 @@
+[
+  {
+    "id": "u-admin-1",
+    "name": "Rina Marpaung",
+    "email": "rina.admin@evdekimi.test",
+    "role": "admin",
+    "hashed_password": "$2b$12$PLACEHOLDERHASHVALUE0000000000000000000000000000000000"
+  },
+  {
+    "id": "u-agent-1",
+    "name": "Siti Rahayu",
+    "email": "siti.agent@evdekimi.test",
+    "role": "agent",
+    "hashed_password": "$2b$12$PLACEHOLDERHASHVALUE0000000000000000000000000000000001"
+  },
+  {
+    "id": "u-agent-2",
+    "name": "Budi Santoso",
+    "email": "budi.agent@evdekimi.test",
+    "role": "agent",
+    "hashed_password": "$2b$12$PLACEHOLDERHASHVALUE0000000000000000000000000000000002"
+  },
+  {
+    "id": "u-agent-3",
+    "name": "Ayu Lestari",
+    "email": "ayu.agent@evdekimi.test",
+    "role": "agent",
+    "hashed_password": "$2b$12$PLACEHOLDERHASHVALUE0000000000000000000000000000000003"
+  },
+  {
+    "id": "u-client-1",
+    "name": "Andi Wijaya",
+    "email": "andi.client@evdekimi.test",
+    "role": "client",
+    "hashed_password": "$2b$12$PLACEHOLDERHASHVALUE0000000000000000000000000000000004"
+  },
+  {
+    "id": "u-client-2",
+    "name": "Maria Gunawan",
+    "email": "maria.client@evdekimi.test",
+    "role": "client",
+    "hashed_password": "$2b$12$PLACEHOLDERHASHVALUE0000000000000000000000000000000005"
+  },
+  {
+    "id": "u-client-3",
+    "name": "Rudi Hartono",
+    "email": "rudi.client@evdekimi.test",
+    "role": "client",
+    "hashed_password": "$2b$12$PLACEHOLDERHASHVALUE0000000000000000000000000000000006"
+  },
+  {
+    "id": "u-client-4",
+    "name": "Dewi Kusuma",
+    "email": "dewi.client@evdekimi.test",
+    "role": "client",
+    "hashed_password": "$2b$12$PLACEHOLDERHASHVALUE0000000000000000000000000000000007"
+  }
+]

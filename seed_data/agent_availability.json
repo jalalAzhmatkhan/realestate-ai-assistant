@@ -1,0 +1,72 @@
+[
+  {
+    "id": "avail-001",
+    "agent_id": "u-agent-1",
+    "property_id": "prop-001",
+    "slot_time": "2026-08-08T10:00:00+07:00",
+    "status": "booked"
+  },
+  {
+    "id": "avail-002",
+    "agent_id": "u-agent-1",
+    "property_id": "prop-001",
+    "slot_time": "2026-08-08T13:00:00+07:00",
+    "status": "open"
+  },
+  {
+    "id": "avail-003",
+    "agent_id": "u-agent-1",
+    "property_id": "prop-003",
+    "slot_time": "2026-08-09T09:00:00+07:00",
+    "status": "open"
+  },
+  {
+    "id": "avail-004",
+    "agent_id": "u-agent-2",
+    "property_id": "prop-002",
+    "slot_time": "2026-08-08T11:00:00+07:00",
+    "status": "booked"
+  },
+  {
+    "id": "avail-005",
+    "agent_id": "u-agent-2",
+    "property_id": "prop-005",
+    "slot_time": "2026-08-09T15:00:00+07:00",
+    "status": "open"
+  },
+  {
+    "id": "avail-006",
+    "agent_id": "u-agent-2",
+    "property_id": "prop-011",
+    "slot_time": "2026-08-10T10:00:00+07:00",
+    "status": "open"
+  },
+  {
+    "id": "avail-007",
+    "agent_id": "u-agent-3",
+    "property_id": "prop-004",
+    "slot_time": "2026-08-08T14:00:00+07:00",
+    "status": "open"
+  },
+  {
+    "id": "avail-008",
+    "agent_id": "u-agent-3",
+    "property_id": "prop-007",
+    "slot_time": "2026-08-09T11:00:00+07:00",
+    "status": "open"
+  },
+  {
+    "id": "avail-009",
+    "agent_id": "u-agent-3",
+    "property_id": "prop-010",
+    "slot_time": "2026-08-11T09:30:00+07:00",
+    "status": "open"
+  },
+  {
+    "id": "avail-010",
+    "agent_id": "u-agent-1",
+    "property_id": "prop-009",
+    "slot_time": "2026-08-09T16:00:00+07:00",
+    "status": "open"
+  }
+]

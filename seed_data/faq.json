@@ -1,0 +1,100 @@
+[
+  {
+    "id": "faq-001",
+    "question": "What documents do I need to rent a property?",
+    "answer": "For rental applications you'll need a valid government-issued ID (KTP or passport for foreign nationals), proof of income (latest 3 months' pay slips or bank statements), and an emergency contact. Foreign nationals additionally need a valid KITAS/visa. Agents may request a reference from a previous landlord.",
+    "category": "application_process",
+    "tags": ["documents", "rental", "requirements", "kyc"]
+  },
+  {
+    "id": "faq-002",
+    "question": "What documents do I need to buy a property?",
+    "answer": "For a purchase you'll need a valid ID (KTP/NPWP for Indonesian citizens), proof of funds or a mortgage pre-approval letter, and — for foreign buyers — the applicable structure (e.g. Hak Pakai or nominee arrangement via legal counsel, since freehold ownership by foreign individuals is restricted under Indonesian law). We recommend engaging a notary (PPAT) before signing any purchase agreement.",
+    "category": "application_process",
+    "tags": ["documents", "purchase", "requirements", "foreign_buyers"]
+  },
+  {
+    "id": "faq-003",
+    "question": "How much is the security deposit for a rental?",
+    "answer": "Standard security deposit is one month's rent for unfurnished units and two months' rent for furnished units, held for the duration of the lease and refunded within 14 days of move-out, minus any deductions for damage beyond normal wear and tear.",
+    "category": "deposit_policy",
+    "tags": ["deposit", "rental", "fees"]
+  },
+  {
+    "id": "faq-004",
+    "question": "Are pets allowed in rental properties?",
+    "answer": "Pet policy varies by listing. Properties tagged 'pet_friendly' in their amenities allow small to medium pets with an additional refundable pet deposit (typically 1 million IDR). Apartments in managed buildings generally do not allow pets due to building rules — always confirm with the listing agent before applying.",
+    "category": "pet_policy",
+    "tags": ["pets", "rental", "amenities"]
+  },
+  {
+    "id": "faq-005",
+    "question": "Can I cancel or reschedule a scheduled viewing?",
+    "answer": "Yes. Viewings can be cancelled or rescheduled free of charge up to 3 hours before the scheduled time. Cancellations within 3 hours are allowed but repeated late cancellations may result in the agent requiring confirmation by phone before future bookings.",
+    "category": "cancellation_policy",
+    "tags": ["viewing", "cancellation", "rescheduling"]
+  },
+  {
+    "id": "faq-006",
+    "question": "What are the standard viewing hours?",
+    "answer": "Property viewings are generally available Monday to Saturday, 09:00–17:00 local time, subject to the individual agent's availability shown when booking. Sunday viewings can sometimes be arranged for sale listings on request.",
+    "category": "viewing_hours",
+    "tags": ["viewing", "hours", "scheduling"]
+  },
+  {
+    "id": "faq-007",
+    "question": "What is the rental application process?",
+    "answer": "1) Browse or ask our assistant for matching listings. 2) Schedule and attend a viewing. 3) Submit your application documents to the listing agent. 4) The landlord reviews and approves within 2–3 business days. 5) Sign the lease and pay the deposit plus first month's rent to confirm the booking.",
+    "category": "application_process",
+    "tags": ["process", "rental", "steps"]
+  },
+  {
+    "id": "faq-008",
+    "question": "Are there any fees for using this platform to find a property?",
+    "answer": "Browsing listings, chatting with the assistant, and booking viewings are free for clients. Agents may charge a standard one-month-rent finder's fee on successful rental placements, or a percentage commission on sales, as disclosed by the individual listing agent before any agreement is signed.",
+    "category": "fees",
+    "tags": ["fees", "commission", "platform"]
+  },
+  {
+    "id": "faq-009",
+    "question": "What is the standard lease term for rental properties?",
+    "answer": "Most residential leases run 12 months, with renewal options negotiated directly with the landlord. Shorter-term leases (3–6 months) are available on select furnished listings, typically at a higher monthly rate.",
+    "category": "lease_terms",
+    "tags": ["lease", "rental", "duration"]
+  },
+  {
+    "id": "faq-010",
+    "question": "Who is responsible for maintenance and repairs during a lease?",
+    "answer": "The landlord is responsible for major structural repairs, plumbing, and electrical systems, unless damage is caused by tenant negligence. Tenants are responsible for routine upkeep (cleaning, light bulbs, minor wear items). Report maintenance issues to your agent, who will coordinate with the landlord.",
+    "category": "maintenance",
+    "tags": ["maintenance", "repairs", "landlord", "tenant"]
+  },
+  {
+    "id": "faq-011",
+    "question": "Are utilities included in the rent?",
+    "answer": "Utilities (electricity, water, internet) are typically NOT included in the listed rent unless the listing explicitly states 'utilities included.' Service charges for apartment buildings (IPL) are usually billed separately based on unit size.",
+    "category": "utilities",
+    "tags": ["utilities", "rental", "fees"]
+  },
+  {
+    "id": "faq-012",
+    "question": "What happens if I need to end my lease early?",
+    "answer": "Early termination typically requires 60 days' written notice and forfeiture of the security deposit unless a replacement tenant is found and approved by the landlord. Some leases include a specific early-termination clause — always check your signed agreement, as terms vary by landlord.",
+    "category": "early_termination",
+    "tags": ["lease", "termination", "notice_period"]
+  },
+  {
+    "id": "faq-013",
+    "question": "Do I need a guarantor or co-signer to rent?",
+    "answer": "A guarantor is not required by default. Landlords may request one for applicants without a local income history (e.g. new arrivals or students), in which case the guarantor must provide the same documentation as the primary applicant.",
+    "category": "application_process",
+    "tags": ["guarantor", "co-signer", "rental"]
+  },
+  {
+    "id": "faq-014",
+    "question": "What payment methods are accepted for deposits and rent?",
+    "answer": "Bank transfer is the standard and recommended method for all deposits, rent, and purchase-related payments — always pay to the landlord's or escrow account named in the agreement, never to the agent personally. Cash payments are discouraged and not covered by any platform protection.",
+    "category": "fees",
+    "tags": ["payment", "deposit", "rent", "safety"]
+  }
+]

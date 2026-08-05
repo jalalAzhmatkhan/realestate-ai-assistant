@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# uv
+uv.lock.bak
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Databases
+*.db
+*.sqlite3
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
+*.log
