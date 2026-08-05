@@ -1,8 +1,12 @@
 import logging
+from pathlib import Path
 
 import pytest
 
 from app.core.config import Settings
+
+SEED_DATA_DIR = str(Path(__file__).resolve().parents[1] / "seed_data")
+SEED_PASSWORD = "ChangeMe123!"
 
 # Every env var Settings reads. Cleared per-test so a developer's real shell
 # environment (or a stray CI variable) can never change a test's outcome.
@@ -37,3 +41,19 @@ def make_settings(**overrides) -> Settings:
 @pytest.fixture
 def settings() -> Settings:
     return make_settings()
+
+
+def make_db_settings(tmp_path, **overrides) -> Settings:
+    """Settings bound to a throwaway SQLite file, never the shared ./app.db.
+
+    `session_cookie_secure=False` because TestClient talks plain http and a
+    `Secure` cookie would not survive the client jar; the `Secure` attribute
+    itself is asserted separately in test_auth.py.
+    """
+    values = {
+        "database_url": f"sqlite:///{(tmp_path / 'test.db').as_posix()}",
+        "seed_data_dir": SEED_DATA_DIR,
+        "session_cookie_secure": False,
+        **overrides,
+    }
+    return make_settings(**values)

@@ -2,7 +2,7 @@
   {
     "id": "prop-001",
     "title": "Modern 2BR Apartment near MRT Extension, Jakarta Selatan",
-    "type": "apartment",
+    "property_type": "apartment",
     "listing_type": "rent",
     "price": 12000000,
     "currency": "IDR",
@@ -23,7 +23,7 @@
   {
     "id": "prop-002",
     "title": "3BR Family House, BSD City",
-    "type": "house",
+    "property_type": "house",
     "listing_type": "sale",
     "price": 3200000000,
     "currency": "IDR",
@@ -44,7 +44,7 @@
   {
     "id": "prop-003",
     "title": "Cozy Studio, Jakarta Pusat",
-    "type": "studio",
+    "property_type": "studio",
     "listing_type": "rent",
     "price": 6500000,
     "currency": "IDR",
@@ -65,7 +65,7 @@
   {
     "id": "prop-004",
     "title": "3BR Townhouse, Dago Area, Bandung",
-    "type": "townhouse",
+    "property_type": "townhouse",
     "listing_type": "sale",
     "price": 2450000000,
     "currency": "IDR",
@@ -86,7 +86,7 @@
   {
     "id": "prop-005",
     "title": "2BR Apartment, BSD City",
-    "type": "apartment",
+    "property_type": "apartment",
     "listing_type": "rent",
     "price": 9500000,
     "currency": "IDR",
@@ -107,7 +107,7 @@
   {
     "id": "prop-006",
     "title": "2BR Apartment for Sale, Surabaya",
-    "type": "apartment",
+    "property_type": "apartment",
     "listing_type": "sale",
     "price": 1150000000,
     "currency": "IDR",
@@ -128,7 +128,7 @@
   {
     "id": "prop-007",
     "title": "4BR House for Rent, Depok",
-    "type": "house",
+    "property_type": "house",
     "listing_type": "rent",
     "price": 14000000,
     "currency": "IDR",
@@ -149,7 +149,7 @@
   {
     "id": "prop-008",
     "title": "3BR Villa with Private Pool, Canggu",
-    "type": "villa",
+    "property_type": "villa",
     "listing_type": "sale",
     "price": 4500000000,
     "currency": "IDR",
@@ -170,7 +170,7 @@
   {
     "id": "prop-009",
     "title": "1BR Apartment, Jakarta Utara",
-    "type": "apartment",
+    "property_type": "apartment",
     "listing_type": "rent",
     "price": 7000000,
     "currency": "IDR",
@@ -191,7 +191,7 @@
   {
     "id": "prop-010",
     "title": "2BR House for Sale, Bogor",
-    "type": "house",
+    "property_type": "house",
     "listing_type": "sale",
     "price": 980000000,
     "currency": "IDR",
@@ -212,7 +212,7 @@
   {
     "id": "prop-011",
     "title": "1BR Apartment, Bandung",
-    "type": "apartment",
+    "property_type": "apartment",
     "listing_type": "rent",
     "price": 5000000,
     "currency": "IDR",
@@ -233,7 +233,7 @@
   {
     "id": "prop-012",
     "title": "2BR Townhouse for Rent, Yogyakarta",
-    "type": "townhouse",
+    "property_type": "townhouse",
     "listing_type": "rent",
     "price": 6000000,
     "currency": "IDR",
@@ -254,7 +254,7 @@
   {
     "id": "prop-013",
     "title": "5BR House, Pondok Indah, Jakarta Selatan (Coming Soon)",
-    "type": "house",
+    "property_type": "house",
     "listing_type": "sale",
     "price": 7800000000,
     "currency": "IDR",
@@ -275,7 +275,7 @@
   {
     "id": "prop-014",
     "title": "3BR Apartment, Surabaya (Sold)",
-    "type": "apartment",
+    "property_type": "apartment",
     "listing_type": "sale",
     "price": 1650000000,
     "currency": "IDR",
@@ -296,7 +296,7 @@
   {
     "id": "prop-015",
     "title": "2BR Villa for Rent, Canggu (Under Offer)",
-    "type": "villa",
+    "property_type": "villa",
     "listing_type": "rent",
     "price": 25000000,
     "currency": "IDR",

@@ -5,14 +5,14 @@ description = "Agentic AI assistant backend for real estate management"
 readme = "../README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "bcrypt>=4.2",
     "fastapi>=0.115",
     "pydantic-settings>=2.5",
+    "pyjwt>=2.9",
+    "sqlmodel>=0.0.22",
     "uvicorn[standard]>=0.32",
-    # Postgres driver for docker-compose's DATABASE_URL. Not yet consumed by
-    # any code — app/db/session.py (task B4, Phase 1) is what actually opens
-    # a connection. Added now so the Docker image builds against the driver
-    # the compose environment expects; may change if Phase 1 picks a
-    # different driver (e.g. asyncpg for an async engine).
+    # Postgres driver for docker-compose's DATABASE_URL. Consumed by
+    # app/db/session.py's sync engine (SQLAlchemy's postgresql+psycopg dialect).
     "psycopg[binary]>=3.2",
 ]
 
