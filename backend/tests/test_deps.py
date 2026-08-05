@@ -12,6 +12,7 @@ from sqlmodel import Session
 
 from app.api.deps import SessionContextDep, enforce_csrf, require_role
 from app.core.security import create_access_token, issue_csrf_token
+from app.db.session import build_engine, create_tables
 from app.main import create_app
 from app.models import User
 
@@ -53,7 +54,13 @@ def _register_probe_routes(app: FastAPI) -> None:
 
 @pytest.fixture
 def settings(tmp_path):
-    return make_db_settings(tmp_path)
+    settings = make_db_settings(tmp_path)
+    # Schema creation is `alembic upgrade head`'s job (see infra/backend/
+    # Dockerfile), not app/main.py's lifespan — this mimics that step having
+    # already run before the app starts, using create_all() directly rather
+    # than real Alembic (slow, and tests Alembic rather than app code).
+    create_tables(build_engine(settings))
+    return settings
 
 
 @pytest.fixture

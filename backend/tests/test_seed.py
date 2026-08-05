@@ -282,10 +282,19 @@ def test_disabled_seed_leaves_an_already_seeded_database_alone(tmp_path, engine_
 
 
 # --- startup wiring -----------------------------------------------------------
+#
+# Schema creation is `alembic upgrade head`'s job — a separate, explicit step run
+# before the app/container starts (see infra/backend/Dockerfile's ENTRYPOINT and
+# the README's "Setup" section), not app/main.py's lifespan. These tests mimic
+# that ordering by calling create_tables() directly against the throwaway SQLite
+# file before touching the app, rather than running real Alembic migrations in
+# every test (slow, and tests Alembic rather than application code). Seeding is
+# still startup work: it only inserts rows into a schema that must already exist.
 
 
 def test_app_startup_creates_tables_and_seeds(tmp_path):
     settings = make_db_settings(tmp_path)
+    create_tables(build_engine(settings))
     app = create_app(settings)
 
     with TestClient(app) as client:
@@ -297,6 +306,7 @@ def test_app_startup_creates_tables_and_seeds(tmp_path):
 
 def test_app_startup_honors_the_seed_kill_switch(tmp_path):
     settings = make_db_settings(tmp_path, seed_on_startup=False)
+    create_tables(build_engine(settings))
     app = create_app(settings)
 
     with TestClient(app) as client:
@@ -308,6 +318,7 @@ def test_app_startup_honors_the_seed_kill_switch(tmp_path):
 
 def test_restarting_the_app_does_not_duplicate_rows(tmp_path):
     settings = make_db_settings(tmp_path)
+    create_tables(build_engine(settings))
 
     with TestClient(create_app(settings)):
         pass
@@ -316,3 +327,17 @@ def test_restarting_the_app_does_not_duplicate_rows(tmp_path):
         counts = _counts(app.state.engine)
 
     assert counts["users"] == len(_seed_file("users.json"))
+
+
+def test_app_startup_no_longer_creates_the_schema_itself(tmp_path):
+    """Regression guard for the create_tables() removal from app/main.py's
+    lifespan (Alembic migration tooling): starting the app against a database
+    with no schema at all must fail loudly (there is nothing for seeding to
+    insert into), not silently create tables from live SQLModel.metadata state.
+    Schema creation is now exclusively `alembic upgrade head`'s job."""
+    settings = make_db_settings(tmp_path)
+    app = create_app(settings)
+
+    with pytest.raises(Exception):  # noqa: B017 - exact DB-API error is driver-specific
+        with TestClient(app):
+            pass

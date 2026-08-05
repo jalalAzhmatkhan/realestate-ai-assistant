@@ -9,7 +9,7 @@ from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
 from app.db.seed import seed_if_empty
-from app.db.session import build_engine, create_tables
+from app.db.session import build_engine
 
 API_V1_PREFIX = "/api/v1"
 
@@ -20,9 +20,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        # Schema creation and seeding are startup work, not import-time work, so
-        # merely importing this module never touches a database.
-        create_tables(app.state.engine)
+        # Schema creation is NOT app startup work: it is a separate, explicit
+        # `alembic upgrade head` step (see infra/backend/Dockerfile's entrypoint
+        # and the README's "Setup" section for local dev) so a real deployment
+        # never silently creates/alters tables from live SQLModel.metadata state
+        # with no migration history or rollback path. Seeding is still startup
+        # work — it only inserts rows into a schema that must already exist.
         seed_if_empty(app.state.engine, app.state.settings)
         yield
         app.state.engine.dispose()

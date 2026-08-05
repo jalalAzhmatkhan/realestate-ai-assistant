@@ -44,6 +44,19 @@ def _enforce_sqlite_foreign_keys(engine: Engine) -> None:
 
 
 def create_tables(engine: Engine) -> None:
+    """``SQLModel.metadata.create_all`` — schema creation from live model state.
+
+    Not called by ``app/main.py``'s lifespan: a real boot applies migration
+    history via ``alembic upgrade head`` (see ``backend/alembic/``, and
+    ``infra/backend/Dockerfile``'s entrypoint / the README's "Setup" section for
+    where that step runs), which can alter an existing table and leaves a
+    rollback path — ``create_all`` can only ever add a missing table. This
+    function still exists for test fixtures, which build a throwaway per-test
+    SQLite file and call it directly rather than running real Alembic migrations
+    on every test run (slow, and would test Alembic rather than application
+    code). ``alembic/versions/``'s initial migration is verified to produce an
+    identical schema to this function so the two cannot silently diverge.
+    """
     SQLModel.metadata.create_all(engine)
 
 

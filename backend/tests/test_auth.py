@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from app.core.security import create_access_token, hash_password, issue_csrf_token
+from app.db.session import build_engine, create_tables
 from app.main import create_app
 from app.models import User
 
@@ -24,7 +25,13 @@ DISABLED_PASSWORD = "DisabledPass1!"
 
 @pytest.fixture
 def settings(tmp_path):
-    return make_db_settings(tmp_path)
+    settings = make_db_settings(tmp_path)
+    # Schema creation is `alembic upgrade head`'s job (see infra/backend/
+    # Dockerfile), not app/main.py's lifespan — this mimics that step having
+    # already run before the app starts, using create_all() directly rather
+    # than real Alembic (slow, and tests Alembic rather than app code).
+    create_tables(build_engine(settings))
+    return settings
 
 
 @pytest.fixture
@@ -228,6 +235,7 @@ def test_browser_login_csrf_tokens_are_unique_per_session(client):
 
 def test_cookie_is_marked_secure_when_configured(tmp_path):
     settings = make_db_settings(tmp_path, session_cookie_secure=True)
+    create_tables(build_engine(settings))
     with TestClient(create_app(settings)) as secure_client:
         response = login(secure_client, client_type="browser")
 
@@ -237,6 +245,7 @@ def test_cookie_is_marked_secure_when_configured(tmp_path):
 def test_the_cookie_name_is_configurable_end_to_end(tmp_path):
     """Set and read must both come from settings, with no hardcoded "session"."""
     settings = make_db_settings(tmp_path, session_cookie_name="rea_session")
+    create_tables(build_engine(settings))
     with TestClient(create_app(settings)) as renamed:
         response = login(renamed, client_type="browser")
         csrf = response.json()["csrf_token"]
