@@ -391,3 +391,69 @@ def test_non_string_csrf_claim_is_read_as_absent():
     )
 
     assert decode_access_token(settings, token).csrf_token is None
+
+
+# --- jti (POST /auth/logout revocation, app/core/revocation.py) ---------------
+
+
+def test_created_tokens_always_carry_a_jti():
+    """Unlike `csrf`, every token gets a jti unconditionally -- both client_type=api
+    and client_type=browser sessions must be individually revocable."""
+    settings = make_settings()
+
+    token, _ = create_access_token(settings, user_id="u-1", role="client")
+
+    assert decode_access_token(settings, token).jti is not None
+
+
+def test_jti_is_present_in_the_raw_payload_even_without_a_csrf_token():
+    settings = make_settings()
+
+    token, _ = create_access_token(settings, user_id="u-1", role="client", csrf_token=None)
+
+    assert "jti" in jwt.decode(token, options={"verify_signature": False})
+
+
+def test_jtis_are_unique_per_issued_token():
+    settings = make_settings()
+
+    jtis = {
+        decode_access_token(
+            settings, create_access_token(settings, user_id="u-1", role="client")[0]
+        ).jti
+        for _ in range(20)
+    }
+
+    assert len(jtis) == 20
+
+
+def test_jti_is_absent_on_a_token_issued_before_the_revocation_feature_existed():
+    """A pre-feature token has no jti and can never be individually revoked -- accepted
+    as-is (no real users predate this feature); it still authenticates normally."""
+    settings = make_settings()
+    token = jwt.encode(
+        {"sub": "u-1", "role": "client", "exp": 9999999999},
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+
+    claims = decode_access_token(settings, token)
+
+    assert claims.jti is None
+    assert claims.user_id == "u-1"  # decoding still succeeds -- jti is not required
+
+
+def test_non_string_jti_claim_is_rejected_by_the_token_itself():
+    """Unlike `csrf` (not a registered claim, so PyJWT never inspects its type),
+    `jti` is an RFC 7519 registered claim PyJWT validates the type of on decode -- a
+    non-string value fails `jwt.decode` outright (NotAuthenticatedError) rather than
+    surviving to be read as absent."""
+    settings = make_settings()
+    token = jwt.encode(
+        {"sub": "u-1", "role": "admin", "exp": 9999999999, "jti": 1234},
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+
+    with pytest.raises(NotAuthenticatedError):
+        decode_access_token(settings, token)

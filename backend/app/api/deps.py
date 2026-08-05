@@ -22,6 +22,7 @@ from app.core.exceptions import (
     NotAuthenticatedError,
     SessionRevokedError,
 )
+from app.core.revocation import TokenDenylist
 from app.core.security import csrf_tokens_match, decode_access_token
 from app.db.session import get_session
 from app.models import User, UserRole
@@ -42,6 +43,12 @@ class SessionContext:
     # Non-null only for cookie sessions: a Bearer caller has no ambient credential
     # to forge, so CSRF does not apply to it at all.
     csrf_token: str | None
+    # The token's jti (app/core/revocation.py), so POST /auth/logout can revoke the
+    # exact token presented rather than every session belonging to this user. None
+    # only for a token issued before the revocation feature existed (see
+    # TokenClaims.jti) — such a token authenticates as before but can never be
+    # individually revoked.
+    jti: str | None
 
 
 def get_app_settings(request: Request) -> Settings:
@@ -50,8 +57,16 @@ def get_app_settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
+def get_token_denylist(request: Request) -> TokenDenylist:
+    """Read the denylist the app was built with, same rationale as
+    ``get_app_settings`` — a test can substitute its own binding
+    (``create_app(settings, token_denylist=...)``) without a global to reset."""
+    return request.app.state.token_denylist
+
+
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 DbSession = Annotated[Session, Depends(get_session)]
+TokenDenylistDep = Annotated[TokenDenylist, Depends(get_token_denylist)]
 
 
 def _read_credential(request: Request, settings: Settings) -> tuple[str, AuthMethod] | None:
@@ -70,7 +85,7 @@ def _read_credential(request: Request, settings: Settings) -> tuple[str, AuthMet
 
 
 def get_session_context(
-    request: Request, db: DbSession, settings: SettingsDep
+    request: Request, db: DbSession, settings: SettingsDep, denylist: TokenDenylistDep
 ) -> SessionContext:
     credential = _read_credential(request, settings)
     if credential is None:
@@ -79,6 +94,14 @@ def get_session_context(
 
     # Raises NotAuthenticatedError for expired, tampered, or malformed tokens.
     claims = decode_access_token(settings, token)
+
+    # A revoked token must read exactly like an expired/invalid one to the caller
+    # (401 not_authenticated), never as a distinguishable "this token was explicitly
+    # revoked" state. A claims.jti of None means this token predates the revocation
+    # feature (see TokenClaims.jti) and cannot be checked — it authenticates as
+    # before rather than being rejected outright.
+    if claims.jti is not None and denylist.is_revoked(claims.jti):
+        raise NotAuthenticatedError()
 
     user = db.get(User, claims.user_id)
     if user is None or user.status != "active":
@@ -92,19 +115,21 @@ def get_session_context(
         auth_method=auth_method,
         expires_at=claims.expires_at,
         csrf_token=claims.csrf_token if auth_method == "cookie" else None,
+        jti=claims.jti,
     )
 
 
 def resolve_session_or_none(
-    request: Request, db: DbSession, settings: SettingsDep
+    request: Request, db: DbSession, settings: SettingsDep, denylist: TokenDenylistDep
 ) -> SessionContext | None:
     """Session resolution that tolerates a missing or unusable credential.
 
     Only ``POST /auth/logout`` needs this: it must return 204 for an already-expired
-    session rather than the 401 every other endpoint owes the caller.
+    (or already-revoked) session rather than the 401 every other endpoint owes the
+    caller.
     """
     try:
-        return get_session_context(request, db, settings)
+        return get_session_context(request, db, settings, denylist)
     except (NotAuthenticatedError, SessionRevokedError):
         return None
 

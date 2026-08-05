@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     session_cookie_name: str = "session"
     session_cookie_secure: bool = True
 
+    # Backs the POST /auth/logout token-revocation denylist (app/core/revocation.py).
+    # docker-compose's `backend` service overrides this to redis://redis:6379/0 to
+    # reach the `redis` service; this default targets a Redis reachable at
+    # localhost:6379 for non-Docker local dev. Unlike DATABASE_URL, the app does not
+    # hard-fail without a reachable Redis: the denylist client connects lazily and
+    # fails OPEN on a revocation check (see revocation.py's module docstring), so
+    # `uv run uvicorn` boots fine with no Redis running at all.
+    redis_url: str = "redis://localhost:6379/0"
+
     llm_provider: Literal["openai", "anthropic", "gemini"]
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"

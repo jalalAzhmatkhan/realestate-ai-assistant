@@ -5,13 +5,17 @@ is the same ordering FastAPI will use in production — asserting on the functio
 in isolation would not catch an ordering regression.
 """
 
+import fakeredis
+import jwt
 import pytest
+import redis
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from app.api.deps import SessionContextDep, enforce_csrf, require_role
-from app.core.security import create_access_token, issue_csrf_token
+from app.core.revocation import RedisTokenDenylist
+from app.core.security import create_access_token, decode_access_token, issue_csrf_token
 from app.main import create_app
 from app.models import User
 
@@ -57,8 +61,15 @@ def settings(tmp_path):
 
 
 @pytest.fixture
-def client(settings):
-    app = create_app(settings)
+def denylist() -> RedisTokenDenylist:
+    """fakeredis rather than a real Redis instance, which is not available in this
+    environment (see backend/pyproject.toml's dev group note)."""
+    return RedisTokenDenylist(fakeredis.FakeRedis())
+
+
+@pytest.fixture
+def client(settings, denylist):
+    app = create_app(settings, token_denylist=denylist)
     _register_probe_routes(app)
     with TestClient(app) as test_client:
         yield test_client
@@ -235,6 +246,84 @@ def test_role_is_read_from_the_database_not_the_token(client, settings):
     response = client.get("/_probe/whoami", headers=bearer(settings, ("u-client-1", "admin")))
 
     assert response.json()["role"] == "client"
+
+
+# --- token revocation denylist (app/core/revocation.py) -----------------------
+
+
+def test_revoked_bearer_token_is_401_not_authenticated(client, settings, denylist):
+    """A revoked token must read exactly like an expired/invalid one -- not a
+    distinguishable "this token was explicitly revoked" state."""
+    token, _ = create_access_token(settings, user_id="u-admin-1", role="admin")
+    denylist.revoke(decode_access_token(settings, token).jti, ttl_seconds=3600)
+
+    response = client.get("/_probe/whoami", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 401
+    assert code_of(response) == "not_authenticated"
+
+
+def test_revoked_cookie_session_is_401_not_authenticated(client, settings, denylist):
+    csrf = cookie_session(client, settings, ADMIN)
+    token = client.cookies[settings.session_cookie_name]
+    denylist.revoke(decode_access_token(settings, token).jti, ttl_seconds=3600)
+
+    response = client.get("/_probe/whoami", headers={"X-CSRF-Token": csrf})
+
+    assert response.status_code == 401
+    assert code_of(response) == "not_authenticated"
+
+
+def test_revoking_one_token_does_not_affect_a_different_token_for_the_same_user(
+    client, settings, denylist
+):
+    revoked_token, _ = create_access_token(settings, user_id="u-admin-1", role="admin")
+    other_token, _ = create_access_token(settings, user_id="u-admin-1", role="admin")
+    denylist.revoke(decode_access_token(settings, revoked_token).jti, ttl_seconds=3600)
+
+    response = client.get("/_probe/whoami", headers={"Authorization": f"Bearer {other_token}"})
+
+    assert response.status_code == 200
+
+
+def test_a_token_without_a_jti_authenticates_normally(client, settings):
+    """A token issued before the revocation feature existed has no jti and simply
+    cannot be checked against the denylist -- it authenticates as before rather than
+    being rejected outright (see TokenClaims.jti)."""
+    token = jwt.encode(
+        {"sub": "u-admin-1", "role": "admin", "exp": 9999999999},
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+
+    response = client.get("/_probe/whoami", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+
+
+class _AlwaysBrokenClient:
+    """Stands in for a `redis.Redis` whose connection is down."""
+
+    def exists(self, *_args, **_kwargs):
+        raise redis.ConnectionError("simulated outage")
+
+    def set(self, *_args, **_kwargs):
+        raise redis.ConnectionError("simulated outage")
+
+
+def test_an_unreachable_denylist_does_not_block_authentication(settings):
+    """The fail-open contract at the layer that actually matters: an outage must
+    never turn into every authenticated request being rejected."""
+    app = create_app(settings, token_denylist=RedisTokenDenylist(_AlwaysBrokenClient()))
+    _register_probe_routes(app)
+    token, _ = create_access_token(settings, user_id="u-admin-1", role="admin")
+
+    with TestClient(app) as broken_client:
+        response = broken_client.get(
+            "/_probe/whoami", headers={"Authorization": f"Bearer {token}"}
+        )
+
+    assert response.status_code == 200
 
 
 # --- require_role -------------------------------------------------------------
