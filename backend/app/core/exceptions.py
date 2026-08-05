@@ -50,6 +50,64 @@ class InvalidCredentialsError(DomainError):
         super().__init__(message, **extra)
 
 
+class SessionRevokedError(DomainError):
+    """The token is still valid but the account behind it no longer is (deleted or
+    disabled mid-session). 401 rather than 403 so the SPA re-logs-in instead of
+    leaving a disabled account with a working UI until the JWT expires."""
+
+    code = "session_revoked"
+    status_code = 401
+
+    def __init__(
+        self, message: str = "This session is no longer valid. Please log in again.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class AccountDisabledError(DomainError):
+    code = "account_disabled"
+    status_code = 403
+
+    def __init__(
+        self, message: str = "This account has been disabled.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class ForbiddenError(DomainError):
+    """Role-level denial: the caller's role may not touch this endpoint at all.
+    Out-of-scope *individual records* return 404 instead, so their ids cannot be
+    enumerated by probing for a permission error."""
+
+    code = "forbidden"
+    status_code = 403
+
+    def __init__(
+        self, message: str = "You do not have access to this resource.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class CsrfTokenMissingError(DomainError):
+    code = "csrf_token_missing"
+    status_code = 403
+
+    def __init__(
+        self, message: str = "X-CSRF-Token header is required for this request.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class CsrfTokenInvalidError(DomainError):
+    code = "csrf_token_invalid"
+    status_code = 403
+
+    def __init__(
+        self, message: str = "X-CSRF-Token header does not match this session.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
 async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
     logger.warning(
         "domain_error",

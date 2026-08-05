@@ -120,7 +120,7 @@ realestate-ai-assistant/
       models/                # SQLModel ORM entities
         user.py / property.py / booking.py / availability_slot.py / escalation.py / conversation.py
       schemas/               # Pydantic request/response DTOs (kept separate from ORM models)
-        chat.py / property.py / booking.py / user.py
+        auth.py / chat.py / property.py / booking.py / user.py
       db/
         session.py           # engine/session factory (DATABASE_URL-driven)
         seed.py              # loads backend/seed_data/*.json into an empty DB on startup
