@@ -33,16 +33,44 @@ Requirements: Python >= 3.11, [`uv`](https://docs.astral.sh/uv/).
 cd realestate-ai-assistant/backend
 uv sync                      # installs dependencies from pyproject.toml/uv.lock
 cp .env.example .env         # then fill in the values described below
+uv run alembic upgrade head  # applies schema migrations — required before first boot, see below
 uv run uvicorn app.main:app --reload   # once app/main.py exists; current main.py is a placeholder
 ```
 
 The Python project root is `backend/` — see the Module Layout note below for the state of that move.
 
+### Database migrations (Alembic)
+
+Schema changes are managed by [Alembic](https://alembic.sqlalchemy.org/) (`backend/alembic/`,
+`backend/alembic.ini`), not by the application at startup. `app/main.py`'s lifespan no longer calls
+`SQLModel.metadata.create_all()` — a real deployment applies migration history explicitly, with a
+rollback path, rather than having the app silently create or (more importantly) *fail to alter* tables
+from whatever the current model code happens to declare.
+
+```bash
+uv run alembic upgrade head      # apply all pending migrations (run this before first boot, and again
+                                  # after pulling any change that adds a migration)
+uv run alembic downgrade -1      # roll back one migration
+uv run alembic revision --autogenerate -m "describe the change"   # generate a new migration after
+                                                                    # editing app/models/*
+```
+
+`alembic/env.py` reads the connection string from `app.core.config.get_settings().database_url` (i.e.
+`DATABASE_URL`/`backend/.env`), the same place `app/db/session.py` reads it from — never a hardcoded
+value or `alembic.ini`'s static `sqlalchemy.url` — so `alembic upgrade head` targets the same database
+the app itself would connect to, whether that's the SQLite dev default or the Postgres DSN
+docker-compose injects. Running the app in Docker applies migrations automatically as part of container
+startup (see `infra/backend/Dockerfile`'s entrypoint); non-Docker local dev (`uv run uvicorn`) requires
+running `alembic upgrade head` yourself first, as shown above.
+
 On first startup, `app/db/seed.py` checks whether the configured database is empty and, if so, loads
 `backend/seed_data/*.json` (users, properties, FAQ, availability, viewings) so the app is immediately
 usable without a manual seeding step. Set `SEED_ON_STARTUP=false` to disable this (e.g. once you have
 real data and don't want seed data re-applied against a non-empty DB — the loader still no-ops on a
-non-empty DB by default, but the flag gives an explicit kill switch).
+non-empty DB by default, but the flag gives an explicit kill switch). Seeding still runs from
+`app/main.py`'s lifespan — only schema creation moved to Alembic — but it now requires the schema to
+already exist (i.e. `alembic upgrade head` to have run); against an unmigrated database it fails loudly
+at startup instead of inserting into tables that were never created.
 
 ### Environment variables
 
@@ -124,6 +152,9 @@ realestate-ai-assistant/
       db/
         session.py           # engine/session factory (DATABASE_URL-driven)
         seed.py              # loads backend/seed_data/*.json into an empty DB on startup
+    alembic/                 # migration environment (env.py reads DATABASE_URL via Settings)
+      versions/              # one file per migration, e.g. initial schema for all 6 SQLModel entities
+    alembic.ini
   frontend/
     admin/                   # separate React (Vite + TS) SPA — own package.json, see
                              #   Documentation/system-design/frontend-admin-dashboard.md
@@ -301,6 +332,17 @@ functions. Geo "near me" search in `search_property` uses a Haversine distance c
 the (small) seeded dataset — explicitly **not** how this should work at scale; the documented
 production path is PostGIS `ST_DWithin`/`ST_Distance` once Property Service is extracted, per
 `core components.md`.
+
+Schema is versioned with Alembic (`backend/alembic/`), not `SQLModel.metadata.create_all()` at app
+startup — `alembic upgrade head` is a separate, explicit step (local dev: run it yourself before
+`uv run uvicorn`; Docker: run automatically by `infra/backend/Dockerfile`'s entrypoint before
+`uvicorn` starts). `create_all()` can add a table that's missing from a live database but can never
+alter one that already exists and leaves no migration history or rollback path — fine for a
+never-deployed prototype, not for a service anyone runs twice. Test fixtures are the one place that
+still call `create_all()` directly, against a throwaway per-test SQLite file — running real Alembic
+migrations for every test would be slow and would be testing Alembic, not application code; the
+schema-shape produced by the initial migration is asserted to match `create_all()`'s output exactly, so
+the two are not permitted to silently diverge.
 
 ### 8. Async side-effects without a message queue
 

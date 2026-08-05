@@ -28,3 +28,7 @@ uv.lock.bak
 
 # Logs
 *.log
+
+.claude/
+.idea/
+.vscode/

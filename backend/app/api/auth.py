@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request, Response, status
 from sqlmodel import select
@@ -7,6 +8,7 @@ from app.api.deps import (
     DbSession,
     SessionContextDep,
     SettingsDep,
+    TokenDenylistDep,
     check_csrf,
     resolve_session_or_none,
 )
@@ -89,20 +91,29 @@ def login(
 @router.post(
     "/logout", status_code=status.HTTP_204_NO_CONTENT, response_class=Response
 )
-def logout(request: Request, db: DbSession, settings: SettingsDep) -> Response:
+def logout(
+    request: Request, db: DbSession, settings: SettingsDep, denylist: TokenDenylistDep
+) -> Response:
     """Idempotent: an absent, expired, or already-revoked session still returns 204,
     so a double-click or a stale tab does not surface an error.
 
-    Bearer sessions get a 204 with no cookie header — MVP JWTs are stateless and are
-    not added to a denylist (ruling A3; the 60-minute TTL is the mitigation).
+    Revokes the presented token's ``jti`` (app/core/revocation.py) for both
+    ``auth_method`` values equally — a Bearer token stops working immediately, not
+    just a cookie session. Only the one token presented is revoked, never every
+    session belonging to that user.
     """
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    context = resolve_session_or_none(request, db, settings)
+    context = resolve_session_or_none(request, db, settings, denylist)
     if context is not None:
         # A live cookie session is worth protecting here too: without this, a
         # cross-site form could log the user out.
         check_csrf(request, context)
+
+        if context.jti is not None:
+            remaining = int((context.expires_at - datetime.now(timezone.utc)).total_seconds())
+            denylist.revoke(context.jti, ttl_seconds=remaining)
+
         logger.info(
             "logout", extra={"user_id": context.user.id, "auth_method": context.auth_method}
         )

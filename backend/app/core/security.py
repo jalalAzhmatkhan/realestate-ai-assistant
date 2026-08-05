@@ -77,6 +77,14 @@ class TokenClaims:
     # hand it back after a page reload wipes the SPA's in-memory copy — hashing would
     # add nothing, since anyone who can read the cookie already holds the session.
     csrf_token: str | None
+    # Unique per issued token (secrets.token_urlsafe), for POST /auth/logout's
+    # revocation denylist (app/core/revocation.py). Unlike `csrf`, every token gets
+    # one unconditionally — both client_type=api and client_type=browser sessions
+    # are revocable. Optional here (not `require`d by decode_access_token) rather
+    # than mandatory: a token issued before this feature existed has no jti and
+    # simply can never be revoked, which is accepted as-is (no real users predate
+    # this feature) rather than rejecting such a token outright.
+    jti: str | None
 
 
 def create_access_token(
@@ -93,6 +101,7 @@ def create_access_token(
         "role": role,
         "iat": int(issued_at.timestamp()),
         "exp": int(expires_at.timestamp()),
+        "jti": secrets.token_urlsafe(16),
     }
     if csrf_token is not None:
         payload["csrf"] = csrf_token
@@ -124,11 +133,13 @@ def decode_access_token(settings: Settings, token: str) -> TokenClaims:
         raise NotAuthenticatedError()
 
     csrf_token = payload.get("csrf")
+    jti = payload.get("jti")
     return TokenClaims(
         user_id=payload["sub"],
         role=role,
         expires_at=_expiry_from_claim(payload["exp"]),
         csrf_token=csrf_token if isinstance(csrf_token, str) else None,
+        jti=jti if isinstance(jti, str) else None,
     )
 
 
