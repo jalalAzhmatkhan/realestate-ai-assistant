@@ -1,17 +1,24 @@
 """``escalate_to_human``, exposed to the LLM as ``EscalateToHuman`` — the safety valve.
 
-**Unassigned path only (task B18a).** ``assigned_agent_id`` is always ``None`` and
-``status`` always ``"queued_unassigned"``. Listing-agent assignment is task B18b in Phase
-4; the shared scoped property query it needs (``app/property/queries.py``) already exists,
-so that lands as an additive change to ``_persist_escalation`` rather than a rework.
+Listing-agent assignment (task B18b) follows
+``Documentation/audits/2026-08-05-escalation-assignment-contract.md`` Section 1: when the
+escalation carries a ``property_id`` that resolves *within the caller's RBAC scope* to a
+listing whose agent still exists, is ``active``, and holds an ``agent``/``admin`` role,
+that agent becomes ``assigned_agent_id`` and the status is ``"queued"``. Every other
+branch is ``queued_unassigned``.
+
+**This is an assignment field, not a handoff.** Nobody is paged, so the ``message`` must
+not imply a reply is coming (Decision 7).
 
 This tool is what every other tool's failure path points at, so it must not acquire new
-ways to break. Persistence failure retries once and then degrades to a static support
-reply rather than raising: a user who has already given up on the AI must never be left
-with nothing.
+ways to break. Assignment resolution therefore never fails the call — including an
+exception from the lookup itself — and persistence failure retries once and then degrades
+to a static support reply rather than raising: a user who has already given up on the AI
+must never be left with nothing.
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Literal
 
@@ -21,7 +28,7 @@ from sqlalchemy import func
 from sqlmodel import col, select
 
 from app.agent.deps import AgentDeps
-from app.models import Escalation
+from app.models import Escalation, EscalationStatus, User
 from app.models.types import utcnow
 from app.notifications.port import EscalationCreatedEvent
 from app.property.queries import find_visible_property
@@ -100,18 +107,37 @@ def _latest_escalation(ctx: RunContext[AgentDeps]) -> Escalation | None:
     ).first()
 
 
-def _resolve_property_id(ctx: RunContext[AgentDeps], property_id: str | None) -> str | None:
-    """Only a *resolved* property id is persisted (assignment contract, Decision 6).
+@dataclass(frozen=True)
+class _Assignment:
+    """What the assignment lookup concluded. ``UNASSIGNED`` is the value every negative
+    branch (E1-E6) degrades to, so no caller has to remember the pairing."""
 
-    Resolved through the caller's scoped property query rather than a primary-key read:
-    the id is LLM-supplied, and a bare lookup would let a client probe for the existence
-    of a draft or sold listing. An unresolvable id is stored as ``None`` and logged, so
+    property_id: str | None
+    agent_id: str | None
+    status: EscalationStatus
+
+
+UNASSIGNED = _Assignment(property_id=None, agent_id=None, status="queued_unassigned")
+
+
+def _resolve_assignment(ctx: RunContext[AgentDeps], property_id: str | None) -> _Assignment:
+    """Resolve the listing and its agent, per the contract's E1-E8 table.
+
+    The property is loaded through the caller's **scoped** query, never by primary key:
+    the id is LLM-supplied, so a bare read would let a client probe for the existence and
+    owner of a ``draft``/``sold`` listing by watching whether an assignee came back
+    (Decision 2). "Does not exist" (E2) and "not visible to you" (E3) are therefore one
+    answer, indistinguishable in every observable.
+
+    Only a *resolved* property id is returned for persistence (Decision 6), so
     "escalations for property X" queries stay correct.
     """
     if not property_id:
-        return None
+        return UNASSIGNED  # E1
+
     prop = find_visible_property(ctx.deps.db, ctx.deps.user, property_id)
     if prop is None:
+        # Verbose logging is fine here; a distinguishable *response* would not be.
         logger.warning(
             "escalation_property_unresolved",
             extra={
@@ -121,8 +147,47 @@ def _resolve_property_id(ctx: RunContext[AgentDeps], property_id: str | None) ->
                 "supplied_property_id": property_id,
             },
         )
-        return None
-    return prop.id
+        return UNASSIGNED  # E2, E3
+
+    if prop.agent_id is None:
+        return _Assignment(prop.id, None, "queued_unassigned")  # E4
+
+    agent = ctx.deps.db.get(User, prop.agent_id)
+    if agent is None or agent.status != "active" or agent.role not in ("agent", "admin"):
+        # Naming an account that cannot act is worse than naming nobody: the record
+        # would claim an assignee while being addressed to no one.
+        logger.info(
+            "escalation_assignee_unavailable",
+            extra={
+                "tool": TOOL_NAME,
+                "property_id": prop.id,
+                "listing_agent_id": prop.agent_id,
+            },
+        )
+        return _Assignment(prop.id, None, "queued_unassigned")  # E5, E6
+
+    # Self-assignment is deliberate (Decision 4): the record means "this concerns listing
+    # L, whose owner is agent A", which is true regardless of who typed the message.
+    return _Assignment(prop.id, agent.id, "queued")  # E7, E8
+
+
+def _resolve_assignment_safely(
+    ctx: RunContext[AgentDeps], property_id: str | None
+) -> _Assignment:
+    """Assignment must never become a new way for the safety valve to fail — even a DB
+    error degrades to the unassigned path and the escalation still gets logged."""
+    try:
+        return _resolve_assignment(ctx, property_id)
+    except Exception:
+        logger.exception(
+            "escalation_assignment_failed",
+            extra={
+                "tool": TOOL_NAME,
+                "user_id": ctx.deps.user.id,
+                "conversation_id": ctx.deps.conversation_id,
+            },
+        )
+        return UNASSIGNED
 
 
 def _persist_escalation(
@@ -132,7 +197,7 @@ def _persist_escalation(
     category: str,
     conversation_summary: str,
     urgency: str,
-    resolved_property_id: str | None,
+    assignment: _Assignment,
 ) -> Escalation:
     escalation = Escalation(
         conversation_id=ctx.deps.conversation_id,
@@ -141,10 +206,9 @@ def _persist_escalation(
         category=category,
         conversation_summary=conversation_summary,
         urgency=urgency,
-        property_id=resolved_property_id,
-        # B18b (Phase 4) is what makes these two anything else.
-        assigned_agent_id=None,
-        status="queued_unassigned",
+        property_id=assignment.property_id,
+        assigned_agent_id=assignment.agent_id,
+        status=assignment.status,
     )
     ctx.deps.db.add(escalation)
     ctx.deps.db.commit()
@@ -198,7 +262,7 @@ async def escalate_to_human(
             ),
         )
 
-    resolved_property_id = _resolve_property_id(ctx, property_id)
+    assignment = _resolve_assignment_safely(ctx, property_id)
 
     escalation: Escalation | None = None
     for attempt in (1, 2):
@@ -209,7 +273,7 @@ async def escalate_to_human(
                 category=category,
                 conversation_summary=conversation_summary,
                 urgency=urgency,
-                resolved_property_id=resolved_property_id,
+                assignment=assignment,
             )
             break
         except Exception:
@@ -264,17 +328,30 @@ async def escalate_to_human(
             "category": escalation.category,
             "urgency": escalation.urgency,
             "status": escalation.status,
+            "assigned_agent_id": escalation.assigned_agent_id,
         },
     )
     return EscalateToHumanOutput(
         escalation_id=escalation.id,
         status=escalation.status,
         assigned_agent_id=escalation.assigned_agent_id,
-        # No promise of a callback: this is an assignment field, not a paging system,
-        # and overclaiming here is worse than the no-op it replaces.
-        message=(
-            f"This has been logged for a human colleague. Reference: {escalation.id}. "
-            f"Give the user this reference. Do not tell them anyone will respond, review "
-            f"it, or get back to them — nobody was paged."
-        ),
+        message=_result_message(escalation),
+    )
+
+
+def _result_message(escalation: Escalation) -> str:
+    """Decision 7's two reference sentences, each followed by the standing instruction
+    that keeps the model from turning either into a callback promise.
+
+    Assignment records who a listing belongs to; it pages nobody, so "flagged it to the
+    agent handling that listing" is the strongest true claim available.
+    """
+    logged = (
+        "I've logged this and flagged it to the agent handling that listing."
+        if escalation.status == "queued"
+        else "I've logged this for our support team."
+    )
+    return (
+        f"{logged} Reference: {escalation.id}. Give the user this reference. Do not tell "
+        f"them anyone will respond, review it, or get back to them — nobody was paged."
     )

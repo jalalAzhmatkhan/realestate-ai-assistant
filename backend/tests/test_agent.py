@@ -27,7 +27,12 @@ from sqlmodel import Session, select
 from app.agent.deps import AgentDeps
 from app.agent.orchestrator import build_agent, extract_tool_calls
 from app.agent.prompt import SYSTEM_PROMPT
-from app.agent.tools import reschedule_viewing, schedule_viewing, search_property
+from app.agent.tools import (
+    escalate_to_human,
+    reschedule_viewing,
+    schedule_viewing,
+    search_property,
+)
 from app.booking.slots import cancel_booking
 from app.db.session import build_engine, create_tables
 from app.models import AvailabilitySlot, Booking, Conversation, Escalation, Property, User
@@ -1505,3 +1510,215 @@ async def test_the_escalation_event_carries_no_free_text(db, notifier, faq_index
     assert not hasattr(event, "reason")
     assert not hasattr(event, "conversation_summary")
     assert event.escalation_id == run.payload()["escalation_id"]
+
+
+# ------------------------------------- B18b: listing-agent assignment, the E1-E8 table
+#
+# Documentation/audits/2026-08-05-escalation-assignment-contract.md § Decision 3. The
+# whole table is here rather than split by outcome because E2 and E3 are only meaningful
+# next to E8: "always unassigned" would satisfy six of the eight rows on its own.
+
+NULL_OWNER_PROPERTY = "prop-unowned"
+DISABLED_OWNER_PROPERTY = "prop-disabled-owner"
+DOWNGRADED_OWNER_PROPERTY = "prop-downgraded-owner"
+DISABLED_AGENT = "u-agent-disabled"
+DOWNGRADED_AGENT = "u-agent-downgraded"
+
+
+@pytest.fixture
+def assignment_fixtures(db):
+    """The three listings no seed row can express: an unowned one (E4), one owned by a
+    disabled account (E5), and one owned by an account whose role was downgraded off
+    ``agent``/``admin`` (E6)."""
+    db.add_all(
+        [
+            _user(DISABLED_AGENT, "agent", status="disabled"),
+            _user(DOWNGRADED_AGENT, "client"),
+        ]
+    )
+    db.flush()
+    db.add_all(
+        [
+            _property(NULL_OWNER_PROPERTY, status="active", agent_id=None),
+            _property(DISABLED_OWNER_PROPERTY, status="active", agent_id=DISABLED_AGENT),
+            _property(DOWNGRADED_OWNER_PROPERTY, status="active", agent_id=DOWNGRADED_AGENT),
+        ]
+    )
+    db.commit()
+    return db
+
+
+async def _escalate(db, notifier, faq_index, *, user_id, property_id=None, conversation_id="conv-test"):
+    arguments = {"reason": "about a listing", "conversation_summary": "s"}
+    if property_id is not None:
+        arguments["property_id"] = property_id
+    return await run_tool(
+        [[("EscalateToHuman", arguments)], "logged"],
+        make_deps(db, notifier, faq_index, user_id=user_id, conversation_id=conversation_id),
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("case", "user_id", "property_id"),
+    [
+        ("E1 no property_id supplied", CLIENT, None),
+        ("E2 property_id does not exist", CLIENT, "prop-never-existed"),
+        ("E3 property_id outside the caller's scope", CLIENT, DRAFT),
+        ("E4 property has no agent", CLIENT, NULL_OWNER_PROPERTY),
+        ("E5 listing agent is disabled", CLIENT, DISABLED_OWNER_PROPERTY),
+        ("E6 listing agent is no longer an agent", CLIENT, DOWNGRADED_OWNER_PROPERTY),
+    ],
+)
+async def test_every_negative_assignment_branch_degrades_to_unassigned(
+    assignment_fixtures, notifier, faq_index, case, user_id, property_id
+):
+    """E1-E6: each returns a *successful* result with no assignee. None of them may
+    fail the call — this tool is what every other tool's failure path points at."""
+    run = await _escalate(
+        assignment_fixtures, notifier, faq_index, user_id=user_id, property_id=property_id
+    )
+    payload = run.payload()
+
+    assert payload["status"] == "queued_unassigned", case
+    assert payload["assigned_agent_id"] is None, case
+    assert payload["escalation_id"] is not None, case
+
+
+@pytest.mark.anyio
+async def test_e7_an_agent_escalating_about_their_own_listing_is_assigned_to_themselves(
+    db, notifier, faq_index
+):
+    """Decision 4: self-assignment is deliberate. The record means "this concerns
+    listing L, whose owner is agent A", which holds whoever typed the message."""
+    run = await _escalate(
+        db, notifier, faq_index, user_id=AGENT, property_id=ACTIVE, conversation_id="conv-agent"
+    )
+    payload = run.payload()
+
+    assert payload["status"] == "queued"
+    assert payload["assigned_agent_id"] == AGENT
+    escalation = db.get(Escalation, payload["escalation_id"])
+    assert escalation.escalated_by_id == escalation.assigned_agent_id == AGENT
+
+
+@pytest.mark.anyio
+async def test_e8_a_visible_listing_with_an_active_agent_is_assigned(db, notifier, faq_index):
+    run = await _escalate(db, notifier, faq_index, user_id=CLIENT, property_id=ACTIVE)
+    payload = run.payload()
+
+    assert payload["status"] == "queued"
+    assert payload["assigned_agent_id"] == AGENT
+    escalation = db.get(Escalation, payload["escalation_id"])
+    assert escalation.assigned_agent_id == AGENT
+    assert escalation.property_id == ACTIVE
+    assert escalation.status == "queued"
+
+
+@pytest.mark.anyio
+async def test_e5_and_e6_are_only_unassigned_because_the_account_cannot_act(
+    assignment_fixtures, notifier, faq_index
+):
+    """Positive control for E5/E6: re-enabling the account and restoring the role turns
+    the same call into an assignment, so "always unassigned" is not what produced them."""
+    db = assignment_fixtures
+    revived = db.get(User, DISABLED_AGENT)
+    revived.status = "active"
+    db.add(revived)
+    db.commit()
+
+    run = await _escalate(
+        db, notifier, faq_index, user_id=CLIENT, property_id=DISABLED_OWNER_PROPERTY
+    )
+
+    assert run.payload()["assigned_agent_id"] == DISABLED_AGENT
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("hidden_property", [DRAFT, "prop-other-sold"])
+async def test_a_hidden_listing_and_a_nonexistent_one_produce_byte_identical_output(
+    db, notifier, faq_index, hidden_property
+):
+    """The enumeration oracle Decision 2 exists to close, asserted on the whole
+    serialized tool output rather than on the status field.
+
+    Both hidden listings have an *assignable* owner, so a raw primary-key read would
+    return ``queued`` here and hand a ``client`` proof that the listing exists and who
+    owns it.
+    """
+    db.add(_property("prop-other-sold", status="sold", agent_id=OTHER_AGENT))
+    db.commit()
+
+    hidden = (await _escalate(db, notifier, faq_index, user_id=CLIENT, property_id=hidden_property)).payload()
+    missing = (await _escalate(db, notifier, faq_index, user_id=CLIENT, property_id="prop-never-existed")).payload()
+
+    def normalized(payload: dict) -> str:
+        # Only the reference id may differ between two distinct escalations.
+        return json.dumps(payload, sort_keys=True).replace(payload["escalation_id"], "<ref>")
+
+    assert normalized(hidden) == normalized(missing)
+
+
+@pytest.mark.anyio
+async def test_the_owning_agent_sees_the_assignment_the_client_cannot(db, notifier, faq_index):
+    """The asymmetry Decision 2 predicts, stated as a test: the same ``property_id``
+    resolves for the owner and not for a ``client``."""
+    as_client = (await _escalate(db, notifier, faq_index, user_id=CLIENT, property_id=DRAFT)).payload()
+    as_owner = (
+        await _escalate(
+            db, notifier, faq_index, user_id=AGENT, property_id=DRAFT, conversation_id="conv-agent"
+        )
+    ).payload()
+
+    assert as_client["assigned_agent_id"] is None
+    assert as_owner["assigned_agent_id"] == AGENT
+
+
+@pytest.mark.anyio
+async def test_a_database_failure_during_assignment_still_logs_the_escalation(
+    db, notifier, faq_index, monkeypatch
+):
+    """The one hard invariant: assignment resolution must never become a new way for the
+    safety valve to fail. A raising lookup degrades to unassigned and proceeds."""
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("connection reset by peer")
+
+    monkeypatch.setattr(escalate_to_human, "find_visible_property", explode)
+
+    run = await _escalate(db, notifier, faq_index, user_id=CLIENT, property_id=ACTIVE)
+    payload = run.payload()
+
+    assert payload["escalation_id"] is not None
+    assert payload["status"] == "queued_unassigned"
+    assert payload["assigned_agent_id"] is None
+    assert db.get(Escalation, payload["escalation_id"]) is not None
+
+
+@pytest.mark.anyio
+async def test_the_escalation_event_carries_the_assignee_and_status(db, notifier, faq_index):
+    """Decision 5: a queue consumer's first question is "who is this for", and it must
+    not have to re-query the escalation table to answer it."""
+    run = await _escalate(db, notifier, faq_index, user_id=CLIENT, property_id=ACTIVE)
+    event = notifier.events[-1]
+
+    assert isinstance(event, EscalationCreatedEvent)
+    assert event.assigned_agent_id == AGENT
+    assert event.status == "queued"
+    assert event.property_id == ACTIVE
+    assert event.escalated_by_id == CLIENT
+    assert event.escalated_by_role == "client"
+    assert event.escalation_id == run.payload()["escalation_id"]
+    assert not hasattr(event, "reason")
+    assert not hasattr(event, "conversation_summary")
+
+
+@pytest.mark.anyio
+async def test_an_unresolvable_property_id_is_absent_from_the_event_too(
+    db, notifier, faq_index
+):
+    """Decision 6 applies to the event, not only the row — a dangling id in a fan-out
+    payload misleads every consumer downstream of it."""
+    await _escalate(db, notifier, faq_index, user_id=CLIENT, property_id=DRAFT)
+
+    assert notifier.events[-1].property_id is None

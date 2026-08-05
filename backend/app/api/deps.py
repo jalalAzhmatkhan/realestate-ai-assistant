@@ -26,6 +26,8 @@ from app.core.revocation import TokenDenylist
 from app.core.security import csrf_tokens_match, decode_access_token
 from app.db.session import get_session
 from app.models import User, UserRole
+from app.notifications.log_notifier import LogNotifier
+from app.notifications.port import NotificationPort
 
 AuthMethod = Literal["cookie", "bearer"]
 CSRF_HEADER = "X-CSRF-Token"
@@ -64,9 +66,24 @@ def get_token_denylist(request: Request) -> TokenDenylist:
     return request.app.state.token_denylist
 
 
+def get_notifier(request: Request) -> NotificationPort:
+    """One notifier per application instance, defaulting to ``LogNotifier``.
+
+    Shared by the chat surface and the booking REST endpoints so a chat-initiated and a
+    dashboard-initiated booking change reach the same binding — a test injecting its own
+    via ``create_app(notifier=...)`` observes both paths.
+    """
+    notifier = request.app.state.notifier
+    if notifier is None:
+        notifier = LogNotifier()
+        request.app.state.notifier = notifier
+    return notifier
+
+
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 DbSession = Annotated[Session, Depends(get_session)]
 TokenDenylistDep = Annotated[TokenDenylist, Depends(get_token_denylist)]
+NotifierDep = Annotated[NotificationPort, Depends(get_notifier)]
 
 
 def _read_credential(request: Request, settings: Settings) -> tuple[str, AuthMethod] | None:

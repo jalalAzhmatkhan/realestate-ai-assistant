@@ -2,6 +2,7 @@ import logging
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
@@ -108,6 +109,117 @@ class CsrfTokenInvalidError(DomainError):
         super().__init__(message, **extra)
 
 
+class ResourceNotFoundError(DomainError):
+    """One answer for "does not exist" and "not yours".
+
+    Individual records outside the caller's scope return this rather than
+    :class:`ForbiddenError`, so ids cannot be enumerated by probing for a permission
+    error. `403` stays reserved for role-level denials.
+    """
+
+    status_code = 404
+
+
+class PropertyNotFoundError(ResourceNotFoundError):
+    code = "property_not_found"
+
+    def __init__(
+        self, message: str = "That property could not be found.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class BookingNotFoundError(ResourceNotFoundError):
+    code = "booking_not_found"
+
+    def __init__(
+        self, message: str = "That booking could not be found.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class UserNotFoundError(ResourceNotFoundError):
+    code = "user_not_found"
+
+    def __init__(
+        self, message: str = "That user could not be found.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class EmailAlreadyExistsError(DomainError):
+    code = "email_already_exists"
+    status_code = 409
+
+    def __init__(
+        self, message: str = "That email address is already registered.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class InvalidAgentIdError(DomainError):
+    """A body field naming a user who cannot own a listing.
+
+    422 rather than 404: the missing thing is a *field* inside the request, not the
+    resource the request addresses, so a 404 would be read as "the property is gone".
+    It also lets the SPA attach the message to its `agent_id` form field.
+    """
+
+    code = "invalid_agent_id"
+    status_code = 422
+
+    def __init__(
+        self,
+        message: str = "agent_id must reference an existing agent or admin user.",
+        **extra: Any,
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class SelfLockoutForbiddenError(DomainError):
+    """An admin's ``PATCH`` on their own account would disable it or take away the
+    ``admin`` role.
+
+    409, not 422: the request body is well-formed, and the field values are individually
+    valid — the conflict is between the request and the fact that its target is the
+    caller's own, currently-authenticated account. There is no self-service recovery
+    (users are disabled, never deleted, and there is no "re-enable my own account" path),
+    so this is rejected outright rather than allowed-and-regretted.
+    """
+
+    code = "self_lockout_forbidden"
+    status_code = 409
+
+    def __init__(
+        self,
+        message: str = (
+            "You cannot disable your own account or remove your own admin role."
+        ),
+        **extra: Any,
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class InvalidPriceRangeError(DomainError):
+    code = "invalid_price_range"
+    status_code = 422
+
+    def __init__(
+        self, message: str = "min_price must not exceed max_price.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class InvalidDateRangeError(DomainError):
+    code = "invalid_date_range"
+    status_code = 422
+
+    def __init__(
+        self, message: str = "date_from must not be later than date_to.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
 class PageSizeTooLargeError(DomainError):
     """`page_size` above MAX_PAGE_SIZE is rejected rather than silently clamped —
     a clamped page looks to the client like the full page it asked for, so it stops
@@ -140,7 +252,13 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
             "method": request.method,
         },
     )
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.to_detail()})
+    # jsonable_encoder, not the raw dict: `extra` is arbitrary error-specific payload,
+    # and `suggested_alternatives` carries datetimes that json.dumps rejects — without
+    # this a slot conflict renders as a 500 instead of its 409.
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=jsonable_encoder({"detail": exc.to_detail()}),
+    )
 
 
 async def catch_unhandled_exceptions(

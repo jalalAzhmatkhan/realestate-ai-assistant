@@ -489,6 +489,39 @@ async def test_the_escalation_result_promises_no_response_and_says_so_explicitly
 
 
 @pytest.mark.anyio
+async def test_the_assigned_reply_promises_no_response_either(db, notifier, faq_index):
+    """B18b added a *second* success message, on the ``queued`` path, and the test above
+    only ever reaches the unassigned one — so the existing regression does not cover it.
+
+    "Flagged it to the agent handling that listing" is the strongest true claim available:
+    assignment records who a listing belongs to, it still pages nobody.
+    """
+    run = await run_tool(
+        [
+            [
+                (
+                    "EscalateToHuman",
+                    {
+                        "reason": "wants a human about this listing",
+                        "conversation_summary": "asked about the rent",
+                        "property_id": ACTIVE,
+                    },
+                )
+            ],
+            "logged",
+        ],
+        make_deps(db, notifier, faq_index, user_id=CLIENT),
+    )
+    payload = run.payload()
+    message = payload["message"]
+
+    assert payload["status"] == "queued", "fixture no longer exercises the assigned path"
+    _assert_promises_nothing(message, "assigned escalation message")
+    assert "nobody was paged" in message
+    assert payload["escalation_id"] in message
+
+
+@pytest.mark.anyio
 async def test_the_rate_limited_reply_promises_no_response_either(db, notifier, faq_index):
     """The path a frustrated user reaches after asking three times — the one where an
     implied callback does the most damage."""

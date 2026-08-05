@@ -1,5 +1,6 @@
 from datetime import date
 from typing import Literal
+from uuid import uuid4
 
 from sqlalchemy import JSON, Column, Date, ForeignKey, String
 from sqlmodel import Field, SQLModel
@@ -13,7 +14,9 @@ PriceUnit = Literal["per_month", "per_year", "total"]
 class Property(SQLModel, table=True):
     __tablename__ = "properties"
 
-    id: str = Field(primary_key=True)
+    # Generated here, same as Booking/Escalation, so POST /api/v1/properties cannot let
+    # a caller choose an id. The seed loader still supplies its own `prop-00N` values.
+    id: str = Field(default_factory=lambda: f"prop-{uuid4().hex[:12]}", primary_key=True)
     title: str
     # `property_type`, never bare `type` — see the X1 ruling in
     # Documentation/audits/2026-08-05-escalation-assignment-contract.md Section 2.
