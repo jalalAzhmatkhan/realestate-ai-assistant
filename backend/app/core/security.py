@@ -137,8 +137,10 @@ def _expiry_from_claim(exp: object) -> datetime:
     out-of-range value survives `jwt.decode` and would then raise TypeError/
     OverflowError out of `fromtimestamp`. An unusable claim is a failed
     authentication, not a server fault."""
-    # bool is an int subclass, and `exp: true` would silently become 1970-01-01.
     # float is allowed: RFC 7519's NumericDate permits non-integer values.
+    # The bool arm is unreachable today rather than load-bearing — bool is an int
+    # subclass coercing to 0 or 1, both of which PyJWT rejects as expired before
+    # this runs. Kept so the type check stays honest if that ever changes.
     if isinstance(exp, bool) or not isinstance(exp, (int, float)):
         raise NotAuthenticatedError()
     try:

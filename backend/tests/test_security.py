@@ -282,26 +282,12 @@ def _signed(settings, **claims) -> str:
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
-@pytest.mark.parametrize(
-    "exp",
-    [10**19, "9999999999", True, False, None, [9999999999], {"exp": 1}],
-    ids=[
-        "out-of-range",
-        "non-integer",
-        # bool is an int subclass: `exp: true` must not quietly become
-        # 1970-01-01T00:00:01Z, i.e. a permanently-expired token that never errors.
-        "bool-true",
-        "bool-false",
-        "null",
-        "list",
-        "object",
-    ],
-)
+@pytest.mark.parametrize("exp", [10**19, "9999999999"], ids=["out-of-range", "non-integer"])
 def test_unusable_exp_claim_is_rejected_not_raised(exp):
-    """Claims that survive `jwt.decode` and fail in `_expiry_from_claim`.
-
-    The docstring promises NotAuthenticatedError "for anything unusable"; before the
-    DEFECT-1 fix these escaped as OverflowError/TypeError and rendered as 500.
+    """The two values that survive `jwt.decode` and fail in the conversion afterwards:
+    `int(...)` accepts both, so PyJWT's expiry check passes them through, and only
+    `fromtimestamp` chokes. Before the DEFECT-1 fix these escaped as OverflowError/
+    TypeError and rendered as 500 rather than the promised NotAuthenticatedError.
     """
     settings = make_settings()
 
@@ -315,6 +301,9 @@ def test_unusable_exp_claim_is_rejected_not_raised(exp):
         {"exp": float("inf")},
         {"exp": float("-inf")},
         {"exp": float("nan")},
+        {"exp": None},
+        {"exp": [9999999999]},
+        {"exp": {"exp": 1}},
         {"exp": 9999999999, "nbf": float("inf")},
         {"exp": 9999999999, "nbf": "later"},
         {"exp": 9999999999, "nbf": 10**19},
@@ -325,6 +314,9 @@ def test_unusable_exp_claim_is_rejected_not_raised(exp):
         "exp-inf",
         "exp-negative-inf",
         "exp-nan",
+        "exp-null",
+        "exp-list",
+        "exp-object",
         "nbf-inf",
         "nbf-string",
         "nbf-out-of-range",
@@ -332,16 +324,30 @@ def test_unusable_exp_claim_is_rejected_not_raised(exp):
         "iat-string",
     ],
 )
-def test_hostile_temporal_claims_inside_jwt_decode_are_rejected_not_raised(claims):
-    """A distinct code path from the test above: PyJWT validates exp/nbf/iat with a
-    bare `int(...)`, and the resulting OverflowError/TypeError/ValueError is *not* a
-    `jwt.PyJWTError`, so these never reach `_expiry_from_claim` at all. Guarding only
-    the fromtimestamp conversion would leave every one of these returning 500.
+def test_hostile_temporal_claims_are_rejected_inside_jwt_decode(claims):
+    """A distinct code path from the test above, and the reason guarding only the
+    `fromtimestamp` conversion was not enough: PyJWT validates exp/nbf/iat with a bare
+    `int(...)`, and the resulting OverflowError/TypeError/ValueError is *not* a
+    `jwt.PyJWTError`. These never reach the conversion at all — verified by tracing
+    which branch fires — so they need the widened guard around `jwt.decode` itself.
     """
     settings = make_settings()
 
     with pytest.raises(NotAuthenticatedError):
         decode_access_token(settings, _signed(settings, **claims))
+
+
+@pytest.mark.parametrize("exp", [True, False], ids=["true", "false"])
+def test_boolean_exp_claim_never_yields_a_usable_session(exp):
+    """bool is an int subclass, so `exp: true` coerces to 1 rather than erroring. The
+    contract that matters is that no boolean produces a live session; asserting only
+    that keeps this test valid whether PyJWT rejects it as expired (today) or the
+    explicit isinstance guard does.
+    """
+    settings = make_settings()
+
+    with pytest.raises(NotAuthenticatedError):
+        decode_access_token(settings, _signed(settings, exp=exp))
 
 
 @pytest.mark.parametrize("exp", [9999999999, 9999999999.5], ids=["int", "float"])
