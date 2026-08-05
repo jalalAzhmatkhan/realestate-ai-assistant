@@ -3,11 +3,17 @@
 import fakeredis
 import jwt
 import pytest
+import redis
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from app.core.revocation import RedisTokenDenylist
-from app.core.security import create_access_token, hash_password, issue_csrf_token
+from app.core.security import (
+    create_access_token,
+    decode_access_token,
+    hash_password,
+    issue_csrf_token,
+)
 from app.db.session import build_engine, create_tables
 from app.main import create_app
 from app.models import User
@@ -37,10 +43,16 @@ def settings(tmp_path):
 
 
 @pytest.fixture
-def denylist() -> RedisTokenDenylist:
+def redis_client() -> fakeredis.FakeRedis:
     """fakeredis rather than a real Redis instance, which is not available in this
-    environment (see backend/pyproject.toml's dev group note)."""
-    return RedisTokenDenylist(fakeredis.FakeRedis())
+    environment (see backend/pyproject.toml's dev group note). Exposed separately
+    from `denylist` so a test can assert on the raw key/TTL logout actually wrote."""
+    return fakeredis.FakeRedis()
+
+
+@pytest.fixture
+def denylist(redis_client) -> RedisTokenDenylist:
+    return RedisTokenDenylist(redis_client)
 
 
 @pytest.fixture
@@ -595,6 +607,195 @@ def test_a_refused_logout_does_not_revoke_the_token(client):
 
     client.cookies.set(client.app.state.settings.session_cookie_name, issued_token)
     assert client.get(ME, headers={"X-CSRF-Token": csrf}).status_code == 200
+
+
+@pytest.mark.parametrize("email", [ADMIN_EMAIL, AGENT_EMAIL, CLIENT_EMAIL])
+def test_logout_revokes_the_token_for_every_role(client, email):
+    """Revocation is not an admin-only capability, and no role is exempt from it."""
+    token = login(client, email).json()["access_token"]
+
+    client.post(LOGOUT, headers={"Authorization": f"Bearer {token}"})
+
+    assert client.get(ME, headers={"Authorization": f"Bearer {token}"}).status_code == 401
+
+
+def test_logout_does_not_revoke_another_users_session(client, settings):
+    """Cross-user isolation: the denylist is keyed by jti, so one user logging out
+    can never terminate a different user's session."""
+    victim_token = login(client, CLIENT_EMAIL).json()["access_token"]
+    actor_token = login(client, AGENT_EMAIL).json()["access_token"]
+
+    client.post(LOGOUT, headers={"Authorization": f"Bearer {actor_token}"})
+
+    assert client.get(ME, headers={"Authorization": f"Bearer {victim_token}"}).status_code == 200
+
+
+def test_cookie_logout_does_not_revoke_a_bearer_token_for_the_same_user(client, settings):
+    """Revocation is per-token, not per-user, across auth methods too: logging out of
+    the browser session must not sign the same account out of its API client."""
+    bearer_token = login(client, ADMIN_EMAIL).json()["access_token"]
+    csrf = login(client, ADMIN_EMAIL, client_type="browser").json()["csrf_token"]
+
+    client.post(LOGOUT, headers={"X-CSRF-Token": csrf})
+
+    response = client.get(ME, headers={"Authorization": f"Bearer {bearer_token}"})
+    assert response.status_code == 200
+
+
+def test_double_bearer_logout_is_204(client):
+    """The second call presents an already-revoked token, which resolves to no session
+    at all -- logout must stay idempotent rather than 401."""
+    token = login(client).json()["access_token"]
+    client.post(LOGOUT, headers={"Authorization": f"Bearer {token}"})
+
+    assert client.post(LOGOUT, headers={"Authorization": f"Bearer {token}"}).status_code == 204
+
+
+def test_logout_with_a_pre_feature_token_is_204_and_does_not_crash(client, settings):
+    """A token issued before this feature has no jti, so there is nothing to revoke.
+    Logout must skip revocation rather than fail on the missing claim."""
+    token = jwt.encode(
+        {"sub": "u-admin-1", "role": "admin", "exp": 9999999999},
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+
+    response = client.post(LOGOUT, headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 204
+    # Unrevocable by design (see TokenClaims.jti): it keeps working afterwards.
+    assert client.get(ME, headers={"Authorization": f"Bearer {token}"}).status_code == 200
+
+
+# --- POST /auth/logout: denylist entry shape (TTL = remaining token lifetime) --
+
+
+def test_logout_writes_a_denylist_entry_for_the_presented_jti(client, settings, redis_client):
+    token = login(client).json()["access_token"]
+    jti = decode_access_token(settings, token).jti
+
+    client.post(LOGOUT, headers={"Authorization": f"Bearer {token}"})
+
+    assert redis_client.exists(f"revoked_jti:{jti}".encode())
+
+
+def test_the_denylist_entry_expires_with_the_token_rather_than_persisting(
+    client, settings, redis_client
+):
+    """The entry must outlive nothing: its TTL is the token's *remaining* lifetime, so
+    the denylist self-cleans and can never grow unbounded (no cleanup job exists)."""
+    token = login(client).json()["access_token"]
+    jti = decode_access_token(settings, token).jti
+
+    client.post(LOGOUT, headers={"Authorization": f"Bearer {token}"})
+
+    ttl = redis_client.ttl(f"revoked_jti:{jti}".encode())
+    assert 0 < ttl <= settings.jwt_expire_minutes * 60
+
+
+# --- POST /auth/logout: a revoked 401 must not be distinguishable -------------
+
+
+def _strip_volatile(response):
+    """Everything a caller can actually observe, minus headers that differ between any
+    two responses regardless of cause (date, request id, connection bookkeeping)."""
+    headers = {
+        key.lower(): value
+        for key, value in response.headers.items()
+        if key.lower() not in {"date", "server", "x-request-id", "content-length"}
+    }
+    return response.status_code, headers, response.json()
+
+
+def test_a_revoked_token_is_indistinguishable_from_an_expired_one(client, settings, tmp_path):
+    """The security property, asserted on the whole observable response rather than just
+    the code: a caller must not be able to tell "this token was explicitly revoked"
+    from "this token expired" -- that difference would confirm to an attacker holding a
+    stolen token that its owner noticed and logged out."""
+    live_token = login(client).json()["access_token"]
+    client.post(LOGOUT, headers={"Authorization": f"Bearer {live_token}"})
+    expired_token, _ = create_access_token(
+        make_db_settings(tmp_path, jwt_expire_minutes=-1), user_id="u-admin-1", role="admin"
+    )
+
+    revoked = client.get(ME, headers={"Authorization": f"Bearer {live_token}"})
+    expired = client.get(ME, headers={"Authorization": f"Bearer {expired_token}"})
+
+    assert _strip_volatile(revoked) == _strip_volatile(expired)
+
+
+def test_a_revoked_token_is_indistinguishable_from_a_garbage_one(client):
+    revoked_token = login(client).json()["access_token"]
+    client.post(LOGOUT, headers={"Authorization": f"Bearer {revoked_token}"})
+
+    revoked = client.get(ME, headers={"Authorization": f"Bearer {revoked_token}"})
+    garbage = client.get(ME, headers={"Authorization": "Bearer not-a-jwt"})
+
+    assert _strip_volatile(revoked) == _strip_volatile(garbage)
+
+
+# --- POST /auth/logout: fail-open when Redis is unreachable -------------------
+
+
+class _AlwaysBrokenClient:
+    """Stands in for a `redis.Redis` whose connection is down."""
+
+    def exists(self, *_args, **_kwargs):
+        raise redis.ConnectionError("simulated outage")
+
+    def set(self, *_args, **_kwargs):
+        raise redis.ConnectionError("simulated outage")
+
+
+@pytest.fixture
+def broken_redis_client(settings):
+    app = create_app(settings, token_denylist=RedisTokenDenylist(_AlwaysBrokenClient()))
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def test_bearer_logout_is_still_204_when_redis_is_unreachable(broken_redis_client):
+    """A failed revoke is a failed *side-effect*: it must never turn logout's 204 into
+    a 500 (README Design Decisions section 8, mirrored by NotificationPort)."""
+    token = login(broken_redis_client).json()["access_token"]
+
+    response = broken_redis_client.post(LOGOUT, headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 204
+
+
+def test_cookie_logout_is_still_204_and_clears_the_cookie_when_redis_is_unreachable(
+    broken_redis_client,
+):
+    csrf = login(broken_redis_client, client_type="browser").json()["csrf_token"]
+
+    response = broken_redis_client.post(LOGOUT, headers={"X-CSRF-Token": csrf})
+
+    assert response.status_code == 204
+    assert "max-age=0" in response.headers["set-cookie"].lower()
+
+
+def test_login_still_works_when_redis_is_unreachable(broken_redis_client):
+    """Fail-open's whole point: a Redis outage must not become an auth outage."""
+    assert login(broken_redis_client).status_code == 200
+
+
+def test_authentication_still_works_when_redis_is_unreachable(broken_redis_client):
+    token = login(broken_redis_client).json()["access_token"]
+
+    assert broken_redis_client.get(ME, headers={"Authorization": f"Bearer {token}"}).status_code == 200
+
+
+def test_a_token_logged_out_during_an_outage_keeps_working(broken_redis_client):
+    """The accepted cost of fail-open, asserted explicitly so it is a known, tested
+    tradeoff rather than a surprise: with the denylist unwritable, the logged-out token
+    stays valid until it expires naturally -- exactly the pre-feature behavior, no
+    worse. Change this test only alongside a deliberate move to fail-closed."""
+    token = login(broken_redis_client).json()["access_token"]
+
+    broken_redis_client.post(LOGOUT, headers={"Authorization": f"Bearer {token}"})
+
+    assert broken_redis_client.get(ME, headers={"Authorization": f"Bearer {token}"}).status_code == 200
 
 
 # --- OpenAPI surface ----------------------------------------------------------

@@ -406,6 +406,32 @@ def test_created_tokens_always_carry_a_jti():
     assert decode_access_token(settings, token).jti is not None
 
 
+def test_a_browser_session_token_also_carries_a_jti():
+    """The gap ruling A3 left open was Bearer logout, but a cookie session must be
+    revocable too -- so the csrf-carrying variant needs its own assertion, not just
+    the csrf-less one below."""
+    settings = make_settings()
+
+    token, _ = create_access_token(
+        settings, user_id="u-1", role="client", csrf_token=issue_csrf_token()
+    )
+
+    assert decode_access_token(settings, token).jti is not None
+
+
+def test_jti_carries_enough_entropy_to_be_unguessable():
+    """secrets.token_urlsafe(16) is 128 bits rendered as 22 characters. A jti is not a
+    secret on its own, but a short/sequential one would let a holder of one token
+    predict another's denylist key."""
+    settings = make_settings()
+
+    jti = decode_access_token(
+        settings, create_access_token(settings, user_id="u-1", role="client")[0]
+    ).jti
+
+    assert len(jti) >= 22
+
+
 def test_jti_is_present_in_the_raw_payload_even_without_a_csrf_token():
     settings = make_settings()
 

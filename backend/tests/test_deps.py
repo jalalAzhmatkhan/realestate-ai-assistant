@@ -68,10 +68,16 @@ def settings(tmp_path):
 
 
 @pytest.fixture
-def denylist() -> RedisTokenDenylist:
+def redis_client() -> fakeredis.FakeRedis:
     """fakeredis rather than a real Redis instance, which is not available in this
-    environment (see backend/pyproject.toml's dev group note)."""
-    return RedisTokenDenylist(fakeredis.FakeRedis())
+    environment (see backend/pyproject.toml's dev group note). Exposed separately from
+    `denylist` so a test can manipulate the raw keys behind it."""
+    return fakeredis.FakeRedis()
+
+
+@pytest.fixture
+def denylist(redis_client) -> RedisTokenDenylist:
+    return RedisTokenDenylist(redis_client)
 
 
 @pytest.fixture
@@ -316,6 +322,84 @@ class _AlwaysBrokenClient:
 
     def set(self, *_args, **_kwargs):
         raise redis.ConnectionError("simulated outage")
+
+
+@pytest.mark.parametrize("identity", ALL_ROLES, ids=lambda i: i[1])
+def test_a_revoked_token_is_rejected_for_every_role(client, settings, denylist, identity):
+    """No role is exempt from the denylist check -- an admin's revoked token is as dead
+    as a client's."""
+    token, _ = create_access_token(settings, user_id=identity[0], role=identity[1])
+    denylist.revoke(decode_access_token(settings, token).jti, ttl_seconds=3600)
+
+    response = client.get("/_probe/whoami", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 401
+    assert code_of(response) == "not_authenticated"
+
+
+def test_revocation_is_checked_before_role_gating(client, settings, denylist):
+    """Ordering matters: a revoked admin token must read as 401 not_authenticated, never
+    reach require_role, and never come back 403 -- a 403 would confirm to the holder
+    that the token still resolves to a real, authenticated identity."""
+    token, _ = create_access_token(settings, user_id="u-admin-1", role="admin")
+    denylist.revoke(decode_access_token(settings, token).jti, ttl_seconds=3600)
+
+    response = client.get("/_probe/admin-only", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 401
+    assert code_of(response) == "not_authenticated"
+
+
+def test_revocation_is_checked_before_csrf(client, settings, denylist):
+    """Same contract as the module docstring's 401-before-403 ordering: a revoked cookie
+    session with a perfectly valid CSRF header is still 401, not a confusing 403."""
+    csrf = cookie_session(client, settings, ADMIN)
+    token = client.cookies[settings.session_cookie_name]
+    denylist.revoke(decode_access_token(settings, token).jti, ttl_seconds=3600)
+
+    response = client.post("/_probe/write", headers={"X-CSRF-Token": csrf})
+
+    assert response.status_code == 401
+    assert code_of(response) == "not_authenticated"
+
+
+def test_revocation_is_checked_before_the_user_lookup(client, settings, denylist):
+    """A revoked token for a user that does not exist must still be not_authenticated,
+    not session_revoked -- otherwise the two distinct 401 codes would leak whether the
+    subject of a revoked token is a real account."""
+    token, _ = create_access_token(settings, user_id="u-ghost", role="admin")
+    denylist.revoke(decode_access_token(settings, token).jti, ttl_seconds=3600)
+
+    response = client.get("/_probe/whoami", headers={"Authorization": f"Bearer {token}"})
+
+    assert code_of(response) == "not_authenticated"
+
+
+def test_revoking_one_users_token_leaves_another_users_token_alive(client, settings, denylist):
+    """Cross-user isolation at the dependency layer."""
+    revoked, _ = create_access_token(settings, user_id="u-client-1", role="client")
+    untouched, _ = create_access_token(settings, user_id="u-agent-1", role="agent")
+    denylist.revoke(decode_access_token(settings, revoked).jti, ttl_seconds=3600)
+
+    response = client.get("/_probe/whoami", headers={"Authorization": f"Bearer {untouched}"})
+
+    assert response.status_code == 200
+    assert response.json()["user_id"] == "u-agent-1"
+
+
+def test_an_expiring_denylist_entry_stops_blocking_once_it_lapses(
+    client, settings, denylist, redis_client
+):
+    """The entry's TTL is what bounds denylist growth; when it lapses the token would be
+    expired anyway. Asserted via the entry's own expiry rather than by waiting."""
+    token, _ = create_access_token(settings, user_id="u-admin-1", role="admin")
+    jti = decode_access_token(settings, token).jti
+    denylist.revoke(jti, ttl_seconds=3600)
+    assert client.get("/_probe/whoami", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+
+    redis_client.delete(f"revoked_jti:{jti}".encode())  # simulate the TTL lapsing
+
+    assert client.get("/_probe/whoami", headers={"Authorization": f"Bearer {token}"}).status_code == 200
 
 
 def test_an_unreachable_denylist_does_not_block_authentication(settings):

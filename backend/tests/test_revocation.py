@@ -60,6 +60,46 @@ def test_the_denylist_entry_expires_with_the_configured_ttl():
     assert 0 < ttl <= 60
 
 
+# --- adversarial jti values ----------------------------------------------------
+#
+# A jti reaching this module comes from a signature-verified token, so these are not
+# attacker-reachable without the signing key. They are pinned anyway because the jti
+# is concatenated straight into a Redis key: the property worth holding is that no
+# jti value can make one token's revocation apply to a different token.
+
+
+@pytest.mark.parametrize(
+    "jti",
+    [
+        "",
+        "with:colons",
+        "revoked_jti:looks-like-a-prefixed-key",
+        "spaces and \n newlines",
+        "unicode-é中文",
+        "x" * 4096,
+    ],
+    ids=["empty", "colons", "prefix-lookalike", "whitespace", "unicode", "very-long"],
+)
+def test_an_unusual_jti_round_trips_without_error(denylist, jti):
+    denylist.revoke(jti, ttl_seconds=60)
+
+    assert denylist.is_revoked(jti) is True
+
+
+def test_a_prefix_lookalike_jti_does_not_revoke_the_key_it_imitates(denylist):
+    """`revoked_jti:` is prepended, never parsed back out, so a jti that itself starts
+    with the prefix cannot reach another token's denylist entry."""
+    denylist.revoke("revoked_jti:victim", ttl_seconds=60)
+
+    assert denylist.is_revoked("victim") is False
+
+
+def test_an_empty_jti_does_not_revoke_every_other_jti(denylist):
+    denylist.revoke("", ttl_seconds=60)
+
+    assert denylist.is_revoked("jti-1") is False
+
+
 # --- fail-open: an unreachable Redis must never break auth ---------------------
 
 
@@ -121,3 +161,29 @@ def test_from_url_built_denylist_still_fails_open_on_first_use():
     denylist = RedisTokenDenylist.from_url("redis://localhost:1/0")
 
     assert denylist.is_revoked("jti-1") is False
+
+
+def test_from_url_built_denylist_swallows_a_revoke_against_a_dead_address():
+    """The write side of the same path: a real (not stubbed) connection failure must
+    not raise out of `revoke` either."""
+    denylist = RedisTokenDenylist.from_url("redis://localhost:1/0")
+
+    denylist.revoke("jti-1", ttl_seconds=60)  # must not raise
+
+
+def test_timeouts_fail_open_the_same_way_as_refused_connections(caplog):
+    """`redis.TimeoutError` is a distinct class from `ConnectionError` -- a slow Redis
+    must fail open exactly like an unreachable one, not surface as a 500."""
+
+    class _TimingOutClient:
+        def exists(self, *_args, **_kwargs):
+            raise redis.TimeoutError("simulated slow redis")
+
+        def set(self, *_args, **_kwargs):
+            raise redis.TimeoutError("simulated slow redis")
+
+    denylist = RedisTokenDenylist(_TimingOutClient())
+
+    with caplog.at_level(logging.WARNING, logger="app.core.revocation"):
+        assert denylist.is_revoked("jti-1") is False
+    denylist.revoke("jti-1", ttl_seconds=60)  # must not raise
