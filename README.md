@@ -618,9 +618,15 @@ Set-Cookie: session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0
 
 - **Roles:** any authenticated user. **Failure modes:** already logged out / no cookie -> `204`
   anyway (idempotent, so a double-click or a stale tab does not surface an error); invalid CSRF header
-  -> `403 {"code": "csrf_token_invalid"}`. Bearer-authenticated callers get `204` with no cookie
-  header — MVP JWTs are stateless and are not added to a denylist (accepted as-is by ruling **A3**; the
-  60-minute TTL is the mitigation, revisited when Redis enters the stack).
+  -> `403 {"code": "csrf_token_invalid"}`.
+- **Revokes the presented token immediately** via a Redis-backed denylist keyed on the JWT's `jti`
+  claim (`app/core/revocation.py`), superseding ruling **A3**'s original "stateless, no denylist"
+  MVP call once Redis entered the stack. Applies equally to cookie and Bearer sessions — a
+  Bearer-authenticated caller's token also stops working right away, not just past its 60-minute TTL,
+  and no cookie header is set for that caller since there is no cookie to clear. Only the one token
+  presented is revoked, never every session belonging to that user. The denylist check fails open
+  (see that module's docstring) if Redis is unreachable, so a Redis outage degrades to the original
+  TTL-only behavior rather than blocking login/logout entirely.
 
 ### `POST /api/v1/bookings/{id}/reschedule`
 
