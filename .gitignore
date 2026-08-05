@@ -1,5 +1,7 @@
 # Python
 __pycache__/
+.pytest_cache/
+.ruff_cache/
 *.py[cod]
 *.egg-info/
 .eggs/
@@ -7,7 +9,10 @@ __pycache__/
 # Virtual environments
 .venv/
 venv/
+
 node_modules/
+dist/
+.next/
 
 # uv
 uv.lock.bak

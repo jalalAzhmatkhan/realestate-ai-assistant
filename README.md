@@ -124,9 +124,12 @@ realestate-ai-assistant/
         pagination.py        #   shared PageParams dependency + Page[T] response envelope
       agent/                 # the agentic core
         providers.py         #   LLM_PROVIDER -> Pydantic AI Model factory
-        orchestrator.py      #   Agent construction, system prompt loading, run loop
+        prompt.py            #   SYSTEM_PROMPT — the cross-tool reasoning layer (load-bearing, not docs)
+        orchestrator.py      #   Agent construction (all 5 tools registered up front), tool-call extraction
         deps.py              #   AgentDeps: authenticated user + db session + rag index + notification port
         tools/
+          errors.py          #   ToolError (ToolFailed, never ModelRetry) — see Design Decisions
+          booking_common.py  #   maps app/booking/slots.py's exceptions -> ToolError + model-facing guidance
           search_faq.py
           search_property.py
           schedule_viewing.py
@@ -134,8 +137,13 @@ realestate-ai-assistant/
           escalate_to_human.py
       booking/               # booking domain logic shared by the booking tools and the REST endpoints
         slots.py             #   availability resolution + conflict detection (single source of truth)
+        queries.py           #   scoped_booking_query(user) — shared RBAC scoping for RescheduleViewing,
+                              #   GET /bookings, cancel, and the REST reschedule endpoint (Phase 4)
+      property/
+        queries.py           #   scoped_property_query(user) — shared RBAC scoping for SearchProperty,
+                              #   GET /api/v1/properties, and escalate_to_human's assignment lookup
       rag/                   # retrieval for search_faq
-        embeddings.py        #   EMBEDDING_PROVIDER -> embedding function factory
+        embeddings.py        #   EMBEDDING_PROVIDER -> Pydantic AI EmbeddingModel factory (independent of LLM_PROVIDER)
         index.py             #   in-process flat vector index (numpy cosine similarity)
       notifications/         # async side-effect abstraction
         port.py              #   NotificationPort protocol (publish booking/escalation events)
@@ -992,13 +1000,19 @@ class EscalateToHumanInput(BaseModel):
     property_id: str | None = None
 
 class EscalateToHumanOutput(BaseModel):
-    escalation_id: str
+    escalation_id: str | None  # null only on the degraded double-persistence-failure path, see below
     status: Literal["queued", "queued_unassigned"]
     assigned_agent_id: str | None
     message: str
 ```
 Roles: admin, agent, client — always allowed as a safety valve, always tied to the caller's own
 identity/conversation (cannot escalate on behalf of another user).
+
+**`escalation_id` is nullable.** This **supersedes** the originally frozen `str` — forced by the
+already-documented failure mode below (persistence failure → one retry → a static support-contact
+fallback reply): on that degraded path nothing was ever persisted, so there is no id to return, and the
+schema needs to say so rather than lie. Every successful call still returns a real id; the null case is
+exactly the fallback path, nothing else.
 
 **Listing-agent assignment.** When the escalation carries a `property_id` that resolves to a property
 with an active listing agent, `assigned_agent_id` is set to that agent and `status` is `"queued"`;

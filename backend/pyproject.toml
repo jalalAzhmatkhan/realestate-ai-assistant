@@ -19,6 +19,21 @@ dependencies = [
     # Sync client (matches the rest of this codebase's sync SQLModel/FastAPI
     # dependencies). Backs app/core/revocation.py's POST /auth/logout JWT denylist.
     "redis>=5.0",
+    # `-slim` rather than the `pydantic-ai` meta-package: that one pulls in every
+    # provider plus optional extras (CLI, MCP, evals, duckduckgo/tavily search tools)
+    # this service has no use for. The three extras are exactly the values
+    # LLM_PROVIDER accepts, and `google` (not the deprecated `gemini`) is the current
+    # extra backing GoogleModel/GoogleEmbeddingModel.
+    "pydantic-ai-slim[anthropic,google,openai]>=1.0",
+    # Backs app/rag/index.py's flat cosine index.
+    "numpy>=2.4.6",
+    # EMBEDDING_PROVIDER=local, the zero-API-key default, so FAQ search works with no
+    # credentials at all. Heavy (pulls torch) but it is the only way the documented
+    # "runs fully offline out of the box" claim is true; deployments that set
+    # EMBEDDING_PROVIDER=openai/gemini never import it (app/rag/embeddings.py imports
+    # each backend lazily). Model weights are fetched from Hugging Face on first use
+    # and cached thereafter.
+    "sentence-transformers>=3.0",
 ]
 
 [dependency-groups]

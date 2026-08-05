@@ -33,7 +33,6 @@ from app.main import create_app
 from .conftest import SEED_DATA_DIR, SEED_PASSWORD
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
-INITIAL_REVISION = "d0911613091d"
 EXPECTED_TABLES = {
     "users",
     "properties",
@@ -43,6 +42,21 @@ EXPECTED_TABLES = {
     "messages",
     "escalations",
 }
+
+
+def head_revision() -> str:
+    """The current head, read from the migration scripts rather than hardcoded.
+
+    Was a constant while there was exactly one migration; every migration added after
+    that would otherwise fail this file for the wrong reason. The property under test is
+    "`upgrade head` leaves the database stamped at head", not "there is one migration".
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(BACKEND_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(BACKEND_ROOT / "alembic"))
+    return ScriptDirectory.from_config(config).get_current_head()
 
 
 def run_alembic(db_path: Path, *args: str) -> subprocess.CompletedProcess:
@@ -141,14 +155,14 @@ def test_upgrade_head_creates_every_model_table(migrated_db):
     assert set(reflect(migrated_db)) == EXPECTED_TABLES | {"alembic_version"}
 
 
-def test_upgrade_head_stamps_the_initial_revision(migrated_db):
+def test_upgrade_head_stamps_the_head_revision(migrated_db):
     connection = sqlite3.connect(migrated_db)
     try:
         versions = [row[0] for row in connection.execute("SELECT version_num FROM alembic_version")]
     finally:
         connection.close()
 
-    assert versions == [INITIAL_REVISION]
+    assert versions == [head_revision()]
 
 
 # --- parity with create_tables() ----------------------------------------------
