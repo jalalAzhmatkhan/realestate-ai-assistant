@@ -176,6 +176,30 @@ class InvalidAgentIdError(DomainError):
         super().__init__(message, **extra)
 
 
+class SelfLockoutForbiddenError(DomainError):
+    """An admin's ``PATCH`` on their own account would disable it or take away the
+    ``admin`` role.
+
+    409, not 422: the request body is well-formed, and the field values are individually
+    valid — the conflict is between the request and the fact that its target is the
+    caller's own, currently-authenticated account. There is no self-service recovery
+    (users are disabled, never deleted, and there is no "re-enable my own account" path),
+    so this is rejected outright rather than allowed-and-regretted.
+    """
+
+    code = "self_lockout_forbidden"
+    status_code = 409
+
+    def __init__(
+        self,
+        message: str = (
+            "You cannot disable your own account or remove your own admin role."
+        ),
+        **extra: Any,
+    ) -> None:
+        super().__init__(message, **extra)
+
+
 class InvalidPriceRangeError(DomainError):
     code = "invalid_price_range"
     status_code = 422

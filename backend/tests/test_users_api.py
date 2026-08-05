@@ -114,6 +114,81 @@ def test_a_non_admin_cannot_escalate_themselves_to_admin(client):
         assert session.get(User, "u-client-1").role == "client"
 
 
+# ------------------------------------------------------------ self-lockout guard
+
+
+def test_an_admin_cannot_disable_their_own_account(client):
+    """No recovery path exists (disabled, never deleted; no self-service re-enable), so
+    this is rejected outright rather than allowed-and-regretted."""
+    response = client.patch(
+        f"{USERS}/u-admin-1",
+        json={"status": "disabled"},
+        headers=bearer(client, ADMIN_EMAIL),
+    )
+
+    assert response.status_code == 409
+    assert code_of(response) == "self_lockout_forbidden"
+    with Session(client.app.state.engine) as session:
+        assert session.get(User, "u-admin-1").status == "active"
+
+
+def test_an_admin_cannot_demote_themselves(client):
+    response = client.patch(
+        f"{USERS}/u-admin-1", json={"role": "agent"}, headers=bearer(client, ADMIN_EMAIL)
+    )
+
+    assert response.status_code == 409
+    assert code_of(response) == "self_lockout_forbidden"
+    with Session(client.app.state.engine) as session:
+        assert session.get(User, "u-admin-1").role == "admin"
+
+
+def test_the_lockout_guard_does_not_block_unrelated_self_edits(client):
+    """The guard is scoped to status/role, not to touching one's own record at all — an
+    admin renaming themselves is ordinary self-service."""
+    response = client.patch(
+        f"{USERS}/u-admin-1", json={"name": "Rina M."}, headers=bearer(client, ADMIN_EMAIL)
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Rina M."
+
+
+def test_reaffirming_ones_own_admin_role_is_not_a_lockout(client):
+    """``role: "admin"`` on one's own record is a no-op, not a demotion — the guard
+    checks the requested value, not merely whether the field was present."""
+    response = client.patch(
+        f"{USERS}/u-admin-1", json={"role": "admin"}, headers=bearer(client, ADMIN_EMAIL)
+    )
+
+    assert response.status_code == 200
+
+
+def test_an_admin_may_disable_a_different_admin(client):
+    """The guard is about the caller's *own* account specifically, not the admin role in
+    general — disabling a colleague is a normal administrative action."""
+    with Session(client.app.state.engine) as session:
+        other_admin = User(
+            id="u-admin-2",
+            name="Other Admin",
+            email="other.admin@evdekimi.test",
+            role="admin",
+            status="active",
+            hashed_password="$2b$12$notarealhash",
+        )
+        session.add(other_admin)
+        session.commit()
+
+    response = client.patch(
+        f"{USERS}/u-admin-2",
+        json={"status": "disabled"},
+        headers=bearer(client, ADMIN_EMAIL),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "disabled"
+
+
 # ------------------------------------------------------------ no credential material
 
 

@@ -17,7 +17,11 @@ from sqlmodel import Session, col, or_, select
 
 from app.api.deps import DbSession, enforce_csrf, require_role
 from app.api.pagination import Page, PageParamsDep, paginate
-from app.core.exceptions import EmailAlreadyExistsError, UserNotFoundError
+from app.core.exceptions import (
+    EmailAlreadyExistsError,
+    SelfLockoutForbiddenError,
+    UserNotFoundError,
+)
 from app.core.security import hash_password
 from app.models import User, UserRole, UserStatus
 from app.schemas.user import UserCreateRequest, UserResponse, UserUpdateRequest
@@ -113,6 +117,20 @@ def create_user(payload: UserCreateRequest, admin: AdminUser, db: DbSession) -> 
     return UserResponse.from_user(user)
 
 
+def _assert_not_self_lockout(admin: User, target_id: str, payload: UserUpdateRequest) -> None:
+    """No admin can disable their own account or demote themselves out of ``admin`` via
+    this endpoint — there is no recovery path (users are disabled, never deleted, and
+    there is no self-service re-enable), so this is rejected outright rather than
+    allowed-and-regretted. Only checked against fields the caller actually set."""
+    if target_id != admin.id:
+        return
+    fields = payload.model_fields_set
+    disabling_self = "status" in fields and payload.status == "disabled"
+    demoting_self = "role" in fields and payload.role != "admin"
+    if disabling_self or demoting_self:
+        raise SelfLockoutForbiddenError()
+
+
 @router.patch("/{user_id}", response_model=UserResponse)
 def update_user(
     user_id: str, payload: UserUpdateRequest, admin: AdminUser, db: DbSession
@@ -122,6 +140,8 @@ def update_user(
     An omitted field is left untouched — ``model_fields_set`` distinguishes that from an
     explicit value, so a PATCH carrying only ``status`` cannot blank out the name.
     """
+    _assert_not_self_lockout(admin, user_id, payload)
+
     user = db.get(User, user_id)
     if user is None:
         raise UserNotFoundError()
