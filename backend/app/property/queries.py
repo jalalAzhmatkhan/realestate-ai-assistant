@@ -121,6 +121,25 @@ def find_visible_property(db: Session, user: User, property_id: str) -> Property
     return db.exec(statement).first()
 
 
+def editable_property_query(user: User) -> SelectOfScalar[Property]:
+    """A ``SELECT`` over the properties ``user`` may **modify** — narrower than what
+    they may see.
+
+    An agent reads every ``active`` listing but owns only their own, so the write
+    endpoints resolve through this rather than :func:`scoped_property_query`. A record
+    outside it answers ``404``, never ``403``, matching the booking posture.
+    """
+    statement = select(Property)
+    if user.role == "admin":
+        return statement
+    return statement.where(col(Property.agent_id) == user.id)
+
+
+def find_editable_property(db: Session, user: User, property_id: str) -> Property | None:
+    statement = editable_property_query(user).where(col(Property.id) == property_id)
+    return db.exec(statement).first()
+
+
 def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     """Great-circle distance in kilometres.
 

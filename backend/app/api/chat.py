@@ -25,12 +25,10 @@ from sqlmodel import Session, col, select
 from app.agent.deps import AgentDeps
 from app.agent.orchestrator import MAX_TOOL_CALLS_PER_TURN, build_agent, extract_tool_calls
 from app.agent.providers import build_llm_model
-from app.api.deps import CurrentUser, DbSession, SettingsDep
+from app.api.deps import CurrentUser, DbSession, NotifierDep, SettingsDep
 from app.core.config import Settings
 from app.core.exceptions import DomainError
 from app.models import Conversation, Message, User
-from app.notifications.log_notifier import LogNotifier
-from app.notifications.port import NotificationPort
 from app.rag.embeddings import build_embedding_model
 from app.rag.index import FaqIndex, build_faq_index
 from app.schemas.chat import ChatMessageRequest, ChatMessageResponse, ToolCallRecord
@@ -92,14 +90,6 @@ def get_faq_index(request: Request) -> FaqIndex:
     return index
 
 
-def get_notifier(request: Request) -> NotificationPort:
-    notifier = request.app.state.notifier
-    if notifier is None:
-        notifier = LogNotifier()
-        request.app.state.notifier = notifier
-    return notifier
-
-
 def _resolve_conversation(
     db: Session, user: User, conversation_id: str | None
 ) -> Conversation:
@@ -146,6 +136,7 @@ async def post_message(
     user: CurrentUser,
     db: DbSession,
     settings: SettingsDep,
+    notifier: NotifierDep,
 ) -> ChatMessageResponse:
     """Send a message to the agent and get its reply plus the tools it chose to use."""
     conversation = _resolve_conversation(db, user, payload.conversation_id)
@@ -156,7 +147,7 @@ async def post_message(
         conversation_id=conversation.id,
         rag=get_faq_index(request),
         settings=settings,
-        notifier=get_notifier(request),
+        notifier=notifier,
     )
 
     try:

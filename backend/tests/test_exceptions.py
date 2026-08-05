@@ -1,3 +1,8 @@
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from decimal import Decimal
+from uuid import UUID
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -13,6 +18,14 @@ from app.main import create_app
 from .conftest import make_settings
 
 LEAKY_MESSAGE = "connection string postgres://user:hunter2@db.internal/prod"
+CONFLICT_TIME = datetime(2026, 8, 8, 13, 0, tzinfo=timezone.utc)
+CORRELATION_ID = UUID("11111111-2222-3333-4444-555555555555")
+
+
+@dataclass(frozen=True)
+class Suggestion:
+    availability_slot_id: str
+    slot_time: datetime
 
 
 class _Body(BaseModel):
@@ -45,6 +58,18 @@ def build_error_app(**settings_overrides) -> FastAPI:
         raise SlotConflictError(
             "That slot is already booked.",
             suggested_alternatives=[{"availability_slot_id": "avail-002"}],
+        )
+
+    @app.get("/_test/with-non-primitive-extra")
+    async def _with_non_primitive_extra() -> None:
+        raise SlotConflictError(
+            "That slot is already booked.",
+            suggested_alternatives=[
+                {"availability_slot_id": "avail-002", "slot_time": CONFLICT_TIME}
+            ],
+            correlation_id=CORRELATION_ID,
+            retry_after=Decimal("1.5"),
+            offered=Suggestion("avail-003", CONFLICT_TIME),
         )
 
     @app.get("/_test/boom")
@@ -101,6 +126,31 @@ def test_domain_error_merges_error_specific_extra_fields(client):
         "code": "booking_slot_conflict",
         "message": "That slot is already booked.",
         "suggested_alternatives": [{"availability_slot_id": "avail-002"}],
+    }
+
+
+def test_domain_error_extras_are_json_encoded_not_handed_raw_to_the_response(client):
+    """The defect this pins: ``extra`` is arbitrary error-specific payload, and
+    ``suggested_alternatives`` carries ``datetime`` objects. Passing ``to_detail()``
+    straight into ``JSONResponse`` made every real slot conflict render as an unhandled
+    ``500`` instead of its ``409``.
+
+    Asserted at the handler rather than only at ``POST /bookings/{id}/reschedule``,
+    because the hazard belongs to *any* future ``DomainError`` carrying a non-primitive
+    value — today ``BookingRequestError`` is the only subclass that does.
+    """
+    response = client.get("/_test/with-non-primitive-extra")
+    detail = response.json()["detail"]
+
+    assert response.status_code == 409, response.text
+    assert detail["suggested_alternatives"] == [
+        {"availability_slot_id": "avail-002", "slot_time": CONFLICT_TIME.isoformat()}
+    ]
+    assert detail["correlation_id"] == str(CORRELATION_ID)
+    assert detail["retry_after"] == 1.5
+    assert detail["offered"] == {
+        "availability_slot_id": "avail-003",
+        "slot_time": CONFLICT_TIME.isoformat(),
     }
 
 
