@@ -30,16 +30,18 @@ internal module boundaries are designed to map 1:1 onto the distributed target a
 Requirements: Python >= 3.11, [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-cd realestate-ai-assistant
+cd realestate-ai-assistant/backend
 uv sync                      # installs dependencies from pyproject.toml/uv.lock
 cp .env.example .env         # then fill in the values described below
 uv run uvicorn app.main:app --reload   # once app/main.py exists; current main.py is a placeholder
 ```
 
+The Python project root is `backend/` — see the Module Layout note below for the state of that move.
+
 On first startup, `app/db/seed.py` checks whether the configured database is empty and, if so, loads
-`seed_data/*.json` (users, properties, FAQ, availability, viewings) so the app is immediately usable
-without a manual seeding step. Set `SEED_ON_STARTUP=false` to disable this (e.g. once you have real
-data and don't want seed data re-applied against a non-empty DB — the loader still no-ops on a
+`backend/seed_data/*.json` (users, properties, FAQ, availability, viewings) so the app is immediately
+usable without a manual seeding step. Set `SEED_ON_STARTUP=false` to disable this (e.g. once you have
+real data and don't want seed data re-applied against a non-empty DB — the loader still no-ops on a
 non-empty DB by default, but the flag gives an explicit kill switch).
 
 ### Environment variables
@@ -49,7 +51,7 @@ non-empty DB by default, but the flag gives an explicit kill switch).
 | `APP_ENV` | no | `dev` | `dev`/`prod`, controls log format and docs exposure |
 | `LOG_LEVEL` | no | `INFO` | Python logging level |
 | `DATABASE_URL` | no | `sqlite:///./app.db` | SQLModel/SQLAlchemy connection string; swap to a Postgres DSN with no code changes |
-| `SEED_DATA_DIR` | no | `./seed_data` | Where the seed loader reads JSON from |
+| `SEED_DATA_DIR` | no | `./seed_data` | Where the seed loader reads JSON from, resolved relative to the process working directory (`backend/`) — i.e. `backend/seed_data/` from the repo root |
 | `SEED_ON_STARTUP` | no | `true` | Load seed data into an empty DB on boot |
 | `JWT_SECRET_KEY` | **yes** | — | Signing secret for locally-issued JWTs |
 | `JWT_ALGORITHM` | no | `HS256` | JWT signing algorithm |
@@ -68,63 +70,77 @@ non-empty DB by default, but the flag gives an explicit kill switch).
 | `MAX_PAGE_SIZE` | no | `100` | Hard ceiling for `page_size`; larger values are rejected (422), not silently clamped |
 | `CORS_ALLOWED_ORIGINS` | no | `*` (dev only) | Comma-separated origins; must be an explicit origin list (not `*`) for the cookie-authenticated admin SPA |
 
-`.env.example` (to be created by the Backend Engineer alongside implementation) should enumerate all
-of the above with safe dev defaults and empty API key placeholders.
+`.env.example` (to be created by the Backend Engineer alongside implementation, at `backend/.env.example`)
+should enumerate all of the above with safe dev defaults and empty API key placeholders.
 
 ## Module Layout
 
 ```
 realestate-ai-assistant/
-  main.py                 # existing placeholder entrypoint (out of scope for this design pass)
-  pyproject.toml
-  seed_data/               # see "Seed Data" below
+  backend/                   # Python service root — the uv project lives here
+    main.py                  # existing placeholder entrypoint (superseded by app/main.py)
+    pyproject.toml
+    .python-version
+    .env.example
+    seed_data/               # see "Seed Data" below
+    app/
+      api/                   # HTTP layer: FastAPI routers, request/response wiring only
+        deps.py              #   get_current_user / require_role() dependencies
+        auth.py              #   POST /auth/login (+ Set-Cookie/CSRF for the SPA), POST /auth/logout, GET /auth/me
+        chat.py              #   POST /chat/messages — entrypoint into app/agent
+        properties.py        #   property CRUD + read endpoints (RBAC-scoped)
+        bookings.py          #   booking CRUD/list endpoints (RBAC-scoped)
+        users.py             #   admin-only user management endpoints
+        pagination.py        #   shared PageParams dependency + Page[T] response envelope
+      agent/                 # the agentic core
+        providers.py         #   LLM_PROVIDER -> Pydantic AI Model factory
+        orchestrator.py      #   Agent construction, system prompt loading, run loop
+        deps.py              #   AgentDeps: authenticated user + db session + rag index + notification port
+        tools/
+          search_faq.py
+          search_property.py
+          schedule_viewing.py
+          reschedule_viewing.py
+          escalate_to_human.py
+      booking/               # booking domain logic shared by the booking tools and the REST endpoints
+        slots.py             #   availability resolution + conflict detection (single source of truth)
+      rag/                   # retrieval for search_faq
+        embeddings.py        #   EMBEDDING_PROVIDER -> embedding function factory
+        index.py             #   in-process flat vector index (numpy cosine similarity)
+      notifications/         # async side-effect abstraction
+        port.py              #   NotificationPort protocol (publish booking/escalation events)
+        log_notifier.py      #   MVP implementation: structured log line
+      core/                  # cross-cutting concerns
+        config.py            #   pydantic-settings Settings, reads .env
+        security.py          #   password hashing, JWT encode/decode, CSRF token issue/verify, role checks
+        logging.py           #   structured logging setup
+        exceptions.py        #   domain exceptions -> HTTP status mapping
+      models/                # SQLModel ORM entities
+        user.py / property.py / booking.py / availability_slot.py / escalation.py / conversation.py
+      schemas/               # Pydantic request/response DTOs (kept separate from ORM models)
+        chat.py / property.py / booking.py / user.py
+      db/
+        session.py           # engine/session factory (DATABASE_URL-driven)
+        seed.py              # loads backend/seed_data/*.json into an empty DB on startup
   frontend/
-    admin/                 # separate React (Vite + TS) SPA — own package.json, see
-                            #   Documentation/system-design/frontend-admin-dashboard.md
-  app/
-    api/                   # HTTP layer: FastAPI routers, request/response wiring only
-      deps.py              #   get_current_user / require_role() dependencies
-      auth.py              #   POST /auth/login (+ Set-Cookie/CSRF for the SPA), POST /auth/logout, GET /auth/me
-      chat.py              #   POST /chat/messages — entrypoint into app/agent
-      properties.py        #   property CRUD + read endpoints (RBAC-scoped)
-      bookings.py          #   booking CRUD/list endpoints (RBAC-scoped)
-      users.py             #   admin-only user management endpoints
-      pagination.py        #   shared PageParams dependency + Page[T] response envelope
-    agent/                 # the agentic core
-      providers.py         #   LLM_PROVIDER -> Pydantic AI Model factory
-      orchestrator.py      #   Agent construction, system prompt loading, run loop
-      deps.py               #   AgentDeps: authenticated user + db session + rag index
-      tools/
-        search_faq.py
-        search_property.py
-        schedule_viewing.py
-        reschedule_viewing.py
-        escalate_to_human.py
-    booking/               # booking domain logic shared by the booking tools and the REST endpoints
-      slots.py             #   availability resolution + conflict detection (single source of truth)
-    rag/                   # retrieval for search_faq
-      embeddings.py         #   EMBEDDING_PROVIDER -> embedding function factory
-      index.py               #   in-process flat vector index (numpy cosine similarity)
-    notifications/         # async side-effect abstraction
-      port.py               #   NotificationPort protocol (publish booking/escalation events)
-      log_notifier.py        #   MVP implementation: structured log line
-    core/                   # cross-cutting concerns
-      config.py             #   pydantic-settings Settings, reads .env
-      security.py           #   password hashing, JWT encode/decode, CSRF token issue/verify, role checks
-      logging.py             #   structured logging setup
-      exceptions.py           #   domain exceptions -> HTTP status mapping
-    models/                 # SQLModel ORM entities
-      user.py / property.py / booking.py / escalation.py / system_prompt.py
-    schemas/                # Pydantic request/response DTOs (kept separate from ORM models)
-      chat.py / property.py / booking.py / user.py
-    db/
-      session.py             # engine/session factory (DATABASE_URL-driven)
-      seed.py                 # loads seed_data/*.json into an empty DB on startup
+    admin/                   # separate React (Vite + TS) SPA — own package.json, see
+                             #   Documentation/system-design/frontend-admin-dashboard.md
 ```
 
-`seed_data/` lives at the project root rather than nested under `app/` so it can be inspected, edited,
-and diffed without importing the `app` package, and so `SEED_DATA_DIR` can point at a different
-location (e.g. an integration-test fixtures folder) without touching code.
+> **This is the target layout, partially realized.** `backend/seed_data/` already exists; moving
+> `main.py`, `pyproject.toml`, and `.python-version` under `backend/` is task **R1**, the first task in
+> `Documentation/audits/2026-08-05-mvp-implementation-sequencing.md` (ruling A1), and has not been
+> executed yet. Until it is, those three files are still at the repo root. `app/` does not exist yet and
+> is created directly at `backend/app/`.
+
+> **No `app/models/system_prompt.py`.** The system-prompt editor screen was deferred out of MVP scope
+> (`Documentation/audits/2026-08-05-mvp-scope-decisions-prompt-editor-reschedule-tool.md` decision #1),
+> so the model backing it is deliberately absent rather than scaffolded. The system prompt is authored
+> in code and changed by a deploy.
+
+`seed_data/` sits alongside `app/` inside `backend/` rather than nested under `app/` so it can be
+inspected, edited, and diffed without importing the `app` package, and so `SEED_DATA_DIR` can point at a
+different location (e.g. an integration-test fixtures folder) without touching code.
 
 ## Design Decisions
 
@@ -174,12 +190,16 @@ its own `*_API_KEY` / `*_MODEL` env vars. `app/agent/orchestrator.py` builds a s
 against whichever `Model` the factory returns and never branches on provider elsewhere in the codebase.
 Switching providers is a `.env` change, not a code change — this is the concrete implementation of
 "easily extensible for future agents/services," and it also means adding a fourth provider later is a
-one-function change in `providers.py`.
+one-function change in `providers.py`. The `Model` is built by a **factory function, not an import-time
+singleton**, so a future tiered `get_model(tier)` differs by one parameter instead of a rewrite of the
+orchestrator's construction path.
 
 Model routing (cheap/fast model for FAQ-style intents vs. a stronger model for multi-step reasoning),
 which `CLAUDE.md`/`core components.md` describe as a target-state cost control, is **deliberately out
 of scope for the MVP** — a single configured model handles every turn. Flagged explicitly in the
-checkpoint as a scope reduction, not an oversight.
+checkpoint as a scope reduction, not an oversight; the reasoning, and the trigger that would justify
+building it, are recorded in
+`Documentation/audits/2026-08-05-pm-signoffs-model-routing-and-escalation-assignment.md` Decision 1.
 
 ### 3. Autonomous tool selection, no if/else routing
 
@@ -245,7 +265,9 @@ alongside their LLM-supplied arguments and re-check every trust-sensitive field 
 - `search_property`: no identity argument exists in the schema at all for the default case; result
   visibility is filtered by `ctx.deps.user.role` (see RBAC table below), not by an LLM-supplied filter.
 - `escalate_to_human`: always tied to `ctx.deps.user.id` / the current `conversation_id`; a user cannot
-  escalate a different session.
+  escalate a different session. Its `property_id` lookup for listing-agent assignment reuses the same
+  RBAC-scoped property query `search_property` uses, so an LLM-supplied id cannot reveal a listing the
+  caller may not see.
 
 This mirrors `core components.md` §7's "tool calls are re-authorized, not trusted" principle exactly —
 collapsing the network hop into an in-process call does not relax the trust boundary.
@@ -262,7 +284,7 @@ fully offline for FAQ search out of the box).
 
 Trade-off: no FAISS/Chroma/pgvector dependency, no extra infra, trivial to reason about and unit-test
 at 15 rows — but it is an O(n) linear scan with no persistence beyond the process (rebuilt from
-`seed_data/faq.json` on startup) and would not scale past a few thousand documents or multiple
+`backend/seed_data/faq.json` on startup) and would not scale past a few thousand documents or multiple
 instances sharing an index. Production upgrade path (already the target design in
 `core components.md` §2/§3): move the index into pgvector or a dedicated vector DB behind a Knowledge
 Base service, so embeddings are computed once centrally and shared across all Agent Orchestrator
@@ -292,6 +314,12 @@ nothing upstream.
 tool and the REST endpoint) with an identical payload, so a downstream consumer cannot tell — and does
 not need to care — whether a reschedule originated in chat or in the dashboard.
 
+`publish_escalation_created` has a single call site and carries the escalation's `assigned_agent_id`
+and `status`, so a future queue consumer knows who an escalation is for without re-querying the DB. It
+deliberately omits `reason`/`conversation_summary`: those are free text that may contain personal
+detail the user typed, and a fan-out event is the wrong place for it — a consumer that needs them
+fetches by `escalation_id`.
+
 ### 9. One booking-conflict implementation, three call sites
 
 Viewing slots are resolved and conflict-checked in exactly one place — `app/booking/slots.py` — which
@@ -307,6 +335,11 @@ Three copies of "is this slot free" would inevitably diverge, and the chat surfa
 disagreeing about availability is a data-integrity bug, not a cosmetic one. **Sequencing constraint:**
 `app/booking/slots.py` must be extracted *before* either booking tool or the REST endpoint is
 implemented, so none of them ships with a private copy.
+
+The same pattern applies once more, in miniature: the RBAC-scoped property query is shared by
+`search_property`, `GET /api/v1/properties`, and `escalate_to_human`'s assignment lookup, extracted as
+one helper for the same reason — three surfaces disagreeing about what a user may see is an
+authorization bug, not a style problem.
 
 Reschedule is a **distinct operation, not cancel-then-rebook**: it keeps the same `booking_id` (so the
 client's reference and any existing notification thread stay valid), preserves booking history, and
@@ -439,8 +472,16 @@ Set-Cookie: session=<jwt>; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=36
 - **Failure modes:** unknown email or wrong password -> `401 {"code": "invalid_credentials"}` with an
   identical message for both cases (no user-enumeration oracle); disabled user (`status="disabled"`,
   see the user model note under list endpoints) -> `403 {"code": "account_disabled"}`; malformed body
-  -> `422`; repeated failures from the same IP/email -> `429 {"code": "too_many_attempts"}`
-  (rate limiting is a follow-up, not MVP-blocking — flagged in the checkpoint).
+  -> `422`.
+- **Login rate limiting is target-state, not implemented — `429 too_many_attempts` is never returned
+  by this MVP.** In the target architecture, repeated failed logins from the same IP/email return
+  `429 {"code": "too_many_attempts"}`, enforced at the API Gateway. It is deliberately absent here for
+  the same class of reason model routing is (Design Decisions §2): correct rate limiting is per-IP/
+  per-email *shared counter state*, so an in-process counter would be wrong the moment there is more
+  than one instance and would contradict `CLAUDE.md`'s stateless-services principle — an architectural
+  concession bought for a control that a demo does not exercise. Deferred by ruling **A2** in
+  `Documentation/audits/2026-08-05-mvp-implementation-sequencing.md`. The `code` is reserved, not live:
+  clients must not branch on `too_many_attempts` today.
 
 #### CSRF mechanism (double-submit, JWT-bound)
 
@@ -526,8 +567,8 @@ Set-Cookie: session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0
 - **Roles:** any authenticated user. **Failure modes:** already logged out / no cookie -> `204`
   anyway (idempotent, so a double-click or a stale tab does not surface an error); invalid CSRF header
   -> `403 {"code": "csrf_token_invalid"}`. Bearer-authenticated callers get `204` with no cookie
-  header — MVP JWTs are stateless and are not added to a denylist (flagged as a follow-up; the
-  60-minute TTL is the mitigation).
+  header — MVP JWTs are stateless and are not added to a denylist (accepted as-is by ruling **A3**; the
+  60-minute TTL is the mitigation, revisited when Redis enters the stack).
 
 ### `POST /api/v1/bookings/{id}/reschedule`
 
@@ -653,7 +694,7 @@ different params mean AND.
 | `q` | string | Free-text over `title`, `description`, `address` |
 | `city` | string, repeatable | Exact match on `city` |
 | `status` | enum `active\|draft\|under_offer\|sold`, repeatable | Intersected with role scoping (below) |
-| `type` | enum `apartment\|house\|studio\|townhouse\|villa`, repeatable | Property `type` field |
+| `property_type` | enum `apartment\|house\|studio\|townhouse\|villa`, repeatable | Property `property_type` field |
 | `listing_type` | enum `sale\|rent` | |
 | `agent_id` | string | Useful for `admin`; for an `agent` it can only ever match their own id |
 | `min_price` / `max_price` | number | `min_price > max_price` -> `422 {"code": "invalid_price_range"}` |
@@ -662,9 +703,20 @@ different params mean AND.
 Sort whitelist: `listed_date` (default `-listed_date`), `price`, `title`, `city`.
 RBAC scoping: `client` -> `status="active"` only; `agent` -> all `active` plus their own `draft`/
 `under_offer`/`sold`; `admin` -> unrestricted. Identical to `search_property`'s scoping so the chat
-and dashboard surfaces cannot disagree about visibility. Geo filters (`near_lat`/`near_lng`/
+and dashboard surfaces cannot disagree about visibility — both consume one shared scoped-query builder
+rather than two implementations kept in sync by convention. Geo filters (`near_lat`/`near_lng`/
 `radius_km`) stay tool-only for MVP — the dashboard has no map view; adding them here later is
 additive and breaks nothing.
+
+> **Naming note — `property_type`, never bare `type`.** The property-type field is named
+> `property_type` uniformly: on the `Property` model, in `backend/seed_data/properties.json`, on
+> `PropertySummary`, as this filter's query param, and as `SearchPropertyInput.property_type`. The
+> earlier split (`type` in the model/REST filter vs. `property_type` in the tool schema, recorded in
+> `Documentation/audits/2026-08-05-admin-api-contract-gaps.md`) is **superseded** — see
+> `Documentation/audits/2026-08-05-escalation-assignment-contract.md` § Section 2 for the decision and
+> rationale. The chief reason: `PropertySummary` is the item type of both the tool output and this
+> endpoint, so under the old split the model would filter with one name and read results back under
+> another, inside the same context window. Nothing in the codebase should use bare `type`.
 
 **`GET /api/v1/bookings`** — item type: booking object (same fields as the reschedule response).
 
@@ -699,7 +751,8 @@ RBAC: `admin` only — `agent` and `client` receive `403 {"code": "forbidden"}` 
 > bookings), and `created_at` is the natural default sort for a growing user list. Backend Engineer:
 > add `status: "active" | "disabled"` (default `active`) and `created_at` to `app/models/user.py` and
 > to `backend/seed_data/users.json`. `login` rejects `status="disabled"` with `403 account_disabled`,
-> and `/auth/me` returns `401 session_revoked` for a user disabled mid-session.
+> and `/auth/me` returns `401 session_revoked` for a user disabled mid-session. `status` is also load
+> bearing for `escalate_to_human`'s listing-agent assignment, which skips disabled agents.
 
 ### Tool contracts (illustrative — Pydantic AI tool signatures)
 
@@ -743,9 +796,12 @@ class SearchPropertyOutput(BaseModel):
     count: int
 ```
 Roles: admin, agent, client. Data scoping: `client` always sees `status="active"` only; `agent` also
-sees their own `draft`/`under_offer` listings; `admin` unrestricted. Failure modes: no results -> empty
-list (not an error); DB unavailable -> `ToolError` -> orchestrator apology + `EscalateToHuman`
-suggestion.
+sees their own `draft`/`under_offer` listings; `admin` unrestricted — applied through the shared
+RBAC-scoped property query builder, the same one `GET /api/v1/properties` and `escalate_to_human`'s
+assignment lookup use. `property_type` is the same field name carried by `PropertySummary`, the
+`Property` model, and the REST filter (see the naming note above), so the model filters and reads
+results using one vocabulary. Failure modes: no results -> empty list (not an error); DB unavailable ->
+`ToolError` -> orchestrator apology + `EscalateToHuman` suggestion.
 
 ```python
 # schedule_viewing (exposed as "BookViewing")
@@ -898,12 +954,48 @@ class EscalateToHumanOutput(BaseModel):
     message: str
 ```
 Roles: admin, agent, client — always allowed as a safety valve, always tied to the caller's own
-identity/conversation (cannot escalate on behalf of another user). Failure modes: no agent
-assignment logic exists in the MVP, so `assigned_agent_id` is always `null` and `status` is always
-`"queued_unassigned"` (flagged as an explicit simplification, see Open Questions); persistence
-failure -> retried once, then falls back to a static "please contact support@..." reply so the user
-is never left without a next step; repeated escalations from the same session are rate-limited to
-avoid trivial abuse.
+identity/conversation (cannot escalate on behalf of another user).
+
+**Listing-agent assignment.** When the escalation carries a `property_id` that resolves to a property
+with an active listing agent, `assigned_agent_id` is set to that agent and `status` is `"queued"`;
+otherwise `assigned_agent_id` is `null` and `status` is `"queued_unassigned"`. This **supersedes** the
+earlier "no agent assignment logic exists, so `assigned_agent_id` is always `null`" behavior — see
+`Documentation/audits/2026-08-05-pm-signoffs-model-routing-and-escalation-assignment.md` Decision 2 for
+the approval and
+`Documentation/audits/2026-08-05-escalation-assignment-contract.md` § Section 1 for the full edge-case
+contract.
+
+> **This is an assignment *field*, not a human handoff.** No human is paged, no support queue or CRM is
+> consumed, no SLA exists, and the assigned agent has no UI in which to see the escalation. Assignment
+> makes the record *queryable* ("escalations on my listings") the moment someone builds that screen; it
+> does not make anyone respond. The user-facing `message` must correspondingly not promise a callback —
+> `"I've logged this and flagged it to the agent handling that listing. Reference: <id>."`, never "an
+> agent will contact you shortly."
+
+**Assignment resolution.** Assignment **never fails the tool** — every negative branch degrades to the
+unassigned path, because `EscalateToHuman` is the fallback every other tool relies on and must not
+acquire a new way to break:
+
+| Condition | Result |
+|---|---|
+| No `property_id` supplied | `queued_unassigned`, `assigned_agent_id = null` |
+| `property_id` does not exist, **or** resolves outside the caller's RBAC-scoped property set | `queued_unassigned` — the two cases are deliberately indistinguishable |
+| Property has no `agent_id` | `queued_unassigned` |
+| Listing agent is `disabled`, or no longer holds an `agent`/`admin` role | `queued_unassigned` |
+| Listing agent is active — **including when the caller is that agent** (self-assignment) | `queued`, `assigned_agent_id = property.agent_id` |
+
+The property lookup uses the **same RBAC-scoped property query** `SearchProperty` and
+`GET /api/v1/properties` use, not a raw primary-key read. Since `property_id` is LLM-supplied, a bare
+lookup would let a `client` probe for the existence and owner of a `draft`/`sold` listing by watching
+whether an assignee comes back — the same enumeration oracle the `404`-not-`403` booking posture closes.
+Only a *resolved* property id is persisted on the escalation row; an unresolvable one is stored as
+`null` and recorded in a structured warning log, so "escalations for property X" queries stay correct.
+
+Failure modes: persistence failure -> retried once, then falls back to a static "please contact
+support@..." reply so the user is never left without a next step; repeated escalations from the same
+session are rate-limited to avoid trivial abuse. `publish_escalation_created` is emitted after commit
+and carries `assigned_agent_id` and `status` (but not `reason`/`conversation_summary` — see Design
+Decisions §8).
 
 ### Tool RBAC summary
 
@@ -913,7 +1005,7 @@ avoid trivial abuse.
 | `SearchProperty` | yes, unrestricted | yes, own `draft`/`under_offer` + all `active` | yes, `active` only | server-enforced from `ctx.deps.user`, not LLM args |
 | `BookViewing` | yes, any `client_id` | yes, own properties, valid `client_id` | yes, self only (enforced override) | `client_id` re-authorized server-side |
 | `RescheduleViewing` | yes, any booking | yes, own `agent_id` bookings | yes, own `client_id` bookings | booking resolved only within the caller's scope; no identity fields in the schema |
-| `EscalateToHuman` | yes, own session | yes, own session | yes, own session | tied to caller identity/`conversation_id` |
+| `EscalateToHuman` | yes, own session | yes, own session | yes, own session | tied to caller identity/`conversation_id`; assignment lookup uses the caller's property scope |
 
 ## Architecture (MVP as built)
 
@@ -924,7 +1016,7 @@ flowchart TB
     LLM["External LLM API<br/>(OpenAI / Anthropic / Gemini — via LLM_PROVIDER)"]
     EMB["External/local Embedding model<br/>(via EMBEDDING_PROVIDER)"]
     DB[("SQLite / PostgreSQL, via SQLModel")]
-    Seed["seed_data/*.json"]
+    Seed["backend/seed_data/*.json"]
     Log[("Structured app logs")]
 
     subgraph App["FastAPI Application — single process, modular monolith"]
@@ -1150,11 +1242,21 @@ boundaries (see the mapping table in Design Decisions §1) are chosen so that sc
 5. **Centralize auth.** `app/core/security.py` + `app/api/auth.py` become the Auth Service issuing
    JWTs that every extracted service validates independently — RBAC re-authorization at the tool/
    service layer (already enforced in the MVP, see Design Decisions §5) carries over unchanged; it was
-   never dependent on being in-process.
+   never dependent on being in-process. Per-IP/per-email login rate limiting (`429 too_many_attempts`,
+   deliberately absent from the MVP — see the login contract) lands at the API Gateway in this step,
+   which is the only layer that can hold the shared counter state it requires.
 6. **Add the observability and infra layer.** OpenTelemetry tracing across the (now real) network
    hops, Prometheus/Grafana, and horizontal autoscaling per service, per `core components.md` §2
    (Observability Stack). The MVP's structured logging in `app/core/logging.py` is the seam this
    plugs into.
+
+**Model routing** (cheap model for FAQ-style turns, stronger model for multi-step reasoning) is the
+target-state cost control that sits alongside these six, deliberately unbuilt in the MVP. Its trigger
+is LLM spend becoming a material line item — not traffic volume as such — and its implementation is
+gated on one constraint recorded in
+`Documentation/audits/2026-08-05-pm-signoffs-model-routing-and-escalation-assignment.md`: routing may
+key on non-lexical signals only, never on message content, because a content classifier is one reuse
+away from becoming the pre-classification tool router `CLAUDE.md` forbids outright.
 
 Each step is independently deployable and reversible — nothing in the MVP module design requires all
 six steps to happen together, which matters for an incremental rollout under real traffic growth
@@ -1162,13 +1264,13 @@ rather than a big-bang rewrite.
 
 ## Seed Data
 
-Located in `seed_data/`, IDs are consistent across files so bookings/properties can reference users
-and each other:
+Located in `backend/seed_data/`, IDs are consistent across files so bookings/properties can reference
+users and each other:
 
 | File | Contents |
 |---|---|
 | `users.json` | ~8 seed users across all three roles (1 admin, 3 agents, 4 clients). `hashed_password` is a **placeholder string**, not a real bcrypt hash — the Backend Engineer should replace seed values with real hashes (e.g. via `passlib`) as part of implementing `app/core/security.py`; suggested dev convention is that every seed user's plaintext password is `ChangeMe123!` once hashing lands, purely for local testing. Needs `status` and `created_at` fields added, see the `GET /api/v1/users` contract. |
-| `properties.json` | 15 listings across 10 Indonesian cities, mixed `sale`/`rent`, mixed types (apartment/house/studio/townhouse/villa). Includes one `draft`, one `sold`, one `under_offer` listing specifically to exercise the `search_property` RBAC/status-scoping rules described in Design Decisions §5. |
+| `properties.json` | 15 listings across 10 Indonesian cities, mixed `sale`/`rent`, mixed types (apartment/house/studio/townhouse/villa). Includes one `draft`, one `sold`, one `under_offer` listing specifically to exercise the `search_property` RBAC/status-scoping rules described in Design Decisions §5. **The property-type key is `property_type`** — the seed file currently uses `type` and must be renamed as part of the seed-data corrections, per the naming note under `GET /api/v1/properties`. |
 | `faq.json` | 14 FAQ entries (required documents, deposit policy, pet policy, cancellation/rescheduling, viewing hours, application process, fees, lease terms, maintenance responsibility, utilities, early termination, guarantor/co-signer, payment methods, furnished vs. unfurnished) — ready to embed as-is for `app/rag`. |
 | `agent_availability.json` | 10 viewing slots across the three seed agents/several properties; two are pre-marked `booked` and correspond 1:1 to confirmed entries in `viewings.json`, so `schedule_viewing`'s conflict-detection path is testable immediately without creating new data. `avail-002` (same agent `u-agent-1` and property `prop-001` as the booked `avail-001`, status `open`, 13:00) is the natural target for exercising the reschedule happy path on both the REST and `RescheduleViewing` surfaces. |
 | `viewings.json` | 3 sample bookings (2 `confirmed`, matching the `booked` availability slots; 1 `cancelled`, matching a slot that is `open` again) — covers both the happy path and the "slot freed up after cancellation" case. |
@@ -1180,3 +1282,8 @@ and each other:
 > Backend Engineer: add one more `confirmed` future booking for `u-client-1` (against an existing
 > `open` slot such as `avail-010`, and flip that slot to `booked`) so the ambiguity branch is testable
 > without hand-crafting data per test run.
+
+> **Seed-data note for escalation assignment:** all 15 seed properties carry an `agent_id`, so the
+> "property with no listing agent" branch of `escalate_to_human`'s assignment rule needs a hand-built
+> test fixture. Do **not** add an agent-less property to the seed set to cover it — that would weaken
+> the `search_property` RBAC fixtures for no gain.
