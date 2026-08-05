@@ -1,8 +1,11 @@
 # Build context is ./frontend/admin (see docker-compose.yml).
 #
-# Two stages so the final image carries only the built static assets and nginx —
-# not Node, not node_modules, not the Vite/TypeScript toolchain needed to produce
-# the build in the first place.
+# Two stages, but neither one is the container that actually serves traffic — that's
+# the standalone `nginx` service in docker-compose.yml, fronted by ../nginx/nginx.conf.
+# This image's only job is to produce the static build and hand it off: the `builder`
+# stage has the full Node toolchain to run Vite, and `export` strips that back down to
+# just the built assets, so the image docker-compose actually runs each time never
+# carries Node, npm, or node_modules.
 
 # ---- builder: install deps and produce the static production build ----------
 FROM node:22-alpine AS builder
@@ -16,21 +19,21 @@ COPY . .
 
 # Baked in at build time: Vite inlines `import.meta.env.*` into the bundle, there
 # is no runtime env injection for a static SPA. Defaults to a same-origin relative
-# path because the runtime stage's nginx proxies it straight to the `backend`
-# service (see ./nginx.conf) — the bundle itself never needs to know the 'backend'
+# path because the `nginx` service proxies it straight to the `backend` service
+# (see ../nginx/nginx.conf) — the bundle itself never needs to know the 'backend'
 # hostname, which only resolves inside the Compose network, never inside the
 # browser that actually executes this code.
 ARG VITE_API_BASE_URL=/api/v1
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 RUN npm run build
 
-# ---- runtime: nginx serving the static build + reverse-proxying the API -----
-FROM nginx:1.27-alpine AS runtime
+# ---- export: just the built assets, nothing else -----------------------------
+FROM alpine:3.20 AS export
 
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/dist /dist
 
-EXPOSE 80
-
-HEALTHCHECK --interval=30s --timeout=3s --retries=3 --start-period=5s \
-    CMD wget -qO- http://localhost/ >/dev/null 2>&1 || exit 1
+# docker-compose runs this container once per `up`/`build` to populate the
+# `frontend_dist` named volume that the `nginx` service mounts read-only; it exits
+# immediately afterward rather than staying up (`depends_on: condition:
+# service_completed_successfully` is what makes nginx wait for this to finish).
+CMD ["sh", "-c", "cp -r /dist/. /shared/"]
