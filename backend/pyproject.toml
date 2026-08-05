@@ -5,6 +5,7 @@ description = "Agentic AI assistant backend for real estate management"
 readme = "../README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "alembic>=1.13",
     "bcrypt>=4.2",
     "fastapi>=0.115",
     "pydantic-settings>=2.5",
@@ -12,7 +13,8 @@ dependencies = [
     "sqlmodel>=0.0.22",
     "uvicorn[standard]>=0.32",
     # Postgres driver for docker-compose's DATABASE_URL. Consumed by
-    # app/db/session.py's sync engine (SQLAlchemy's postgresql+psycopg dialect).
+    # app/db/session.py's sync engine (SQLAlchemy's postgresql+psycopg dialect)
+    # and by alembic/env.py for the same connection string.
     "psycopg[binary]>=3.2",
 ]
 

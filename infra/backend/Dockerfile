@@ -23,4 +23,12 @@ EXPOSE 8000
 # NOTE: once B4 lands (app/db/session.py + SQLite at DATABASE_URL), the SQLite file
 # needs a named volume mounted here so it survives container replacement. There is
 # no DB layer yet, so no volume is declared.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+#
+# `alembic upgrade head` runs as an explicit step before the app starts, not from
+# app/main.py's lifespan — a real deployment applies migration history rather than
+# silently creating/altering tables from live SQLModel.metadata state. alembic/env.py
+# reads the same DATABASE_URL (via app.core.config.Settings) the app itself connects
+# with, so this targets whatever database docker-compose wires up. Kept as a shell
+# one-liner rather than a separate entrypoint.sh so the migration step and the
+# exec'd server process are both visible directly in this file.
+ENTRYPOINT ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
