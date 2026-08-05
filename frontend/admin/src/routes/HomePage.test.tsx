@@ -6,6 +6,6 @@ import HomePage from './HomePage'
 describe('HomePage', () => {
   it('renders', () => {
     render(<HomePage />)
-    expect(screen.getByRole('heading', { name: 'Real Estate Admin' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeVisible()
   })
 })

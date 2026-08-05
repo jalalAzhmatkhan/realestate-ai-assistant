@@ -29,5 +29,8 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     css: false,
     restoreMocks: true,
+    // A `fetch` stub left standing would silently decide the outcome of every later
+    // test in the file.
+    unstubGlobals: true,
   },
 })

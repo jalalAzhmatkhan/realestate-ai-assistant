@@ -27,10 +27,12 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/*.test.{ts,tsx}', 'src/test/**/*.ts'],
+    files: ['**/*.test.{ts,tsx}', 'src/test/**/*.{ts,tsx}'],
     rules: {
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',
+      // Test helpers are never hot-reloaded.
+      'react-refresh/only-export-components': 'off',
     },
   },
 )
