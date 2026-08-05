@@ -108,6 +108,28 @@ class CsrfTokenInvalidError(DomainError):
         super().__init__(message, **extra)
 
 
+class PageSizeTooLargeError(DomainError):
+    """`page_size` above MAX_PAGE_SIZE is rejected rather than silently clamped —
+    a clamped page looks to the client like the full page it asked for, so it stops
+    paginating and silently loses rows."""
+
+    code = "page_size_too_large"
+    status_code = 422
+
+    def __init__(self, message: str = "page_size exceeds the maximum allowed.", **extra: Any) -> None:
+        super().__init__(message, **extra)
+
+
+class InvalidSortFieldError(DomainError):
+    code = "invalid_sort_field"
+    status_code = 422
+
+    def __init__(
+        self, message: str = "That sort field is not supported by this endpoint.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
 async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
     logger.warning(
         "domain_error",
