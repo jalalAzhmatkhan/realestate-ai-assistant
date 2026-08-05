@@ -36,13 +36,12 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
-    # NOT CONSUMED BY ANY CODE YET. Target-architecture use (per
-    # core-components.md and CLAUDE.md's Scaling Mindset) is session/cache
-    # once JWT-stateless auth needs shared state across instances — the MVP
-    # scoping checkpoint (Documentation/audits/2026-08-05-mvp-scoping-and-
-    # tool-contracts.md) explicitly deferred this. Present now so a later
-    # phase that needs it doesn't also need an infra change; safe to remove
-    # if it never gets wired up.
+    # Consumed by app/core/revocation.py: backs POST /auth/logout's JWT denylist
+    # (RedisTokenDenylist), so a logged-out token is invalidated immediately rather
+    # than just expiring naturally. Not a hard dependency for the rest of the app —
+    # the denylist client connects lazily and revocation checks fail open if this
+    # service is unreachable (see revocation.py's module docstring for the
+    # fail-open-vs-fail-closed reasoning).
 
   backend:
     build:
@@ -63,8 +62,9 @@ services:
       # if Phase 1 picks a different driver (e.g. +asyncpg for an async
       # engine).
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-realestate}:${POSTGRES_PASSWORD:-realestate-dev-only}@postgres:5432/${POSTGRES_DB:-realestate}
-      # NOT YET CONSUMED — no Settings field reads this (see the redis
-      # service note above); present for the same forward-readiness reason.
+      # Consumed by app/core/config.py:Settings.redis_url, which app/main.py uses to
+      # build the POST /auth/logout token-revocation denylist (see the redis service
+      # note above).
       REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:

@@ -1,10 +1,12 @@
 """`POST /auth/login`, `POST /auth/logout`, `GET /auth/me` against the README contract."""
 
+import fakeredis
 import jwt
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+from app.core.revocation import RedisTokenDenylist
 from app.core.security import create_access_token, hash_password, issue_csrf_token
 from app.db.session import build_engine, create_tables
 from app.main import create_app
@@ -35,8 +37,15 @@ def settings(tmp_path):
 
 
 @pytest.fixture
-def client(settings):
-    with TestClient(create_app(settings)) as test_client:
+def denylist() -> RedisTokenDenylist:
+    """fakeredis rather than a real Redis instance, which is not available in this
+    environment (see backend/pyproject.toml's dev group note)."""
+    return RedisTokenDenylist(fakeredis.FakeRedis())
+
+
+@pytest.fixture
+def client(settings, denylist):
+    with TestClient(create_app(settings, token_denylist=denylist)) as test_client:
         yield test_client
 
 
@@ -508,7 +517,8 @@ def test_logout_with_an_expired_cookie_is_204_and_still_clears_it(client, tmp_pa
 
 
 def test_bearer_logout_is_204_with_no_cookie_header(client):
-    """MVP JWTs are stateless and are not denylisted (ruling A3)."""
+    """There is no cookie to clear for a Bearer session; the token itself IS now
+    revoked server-side -- see test_bearer_logout_actually_revokes_the_token."""
     token = login(client).json()["access_token"]
 
     response = client.post(LOGOUT, headers={"Authorization": f"Bearer {token}"})
@@ -528,6 +538,63 @@ def test_logout_is_available_to_every_role(client, email):
     csrf = login(client, email, client_type="browser").json()["csrf_token"]
 
     assert client.post(LOGOUT, headers={"X-CSRF-Token": csrf}).status_code == 204
+
+
+# --- POST /auth/logout: token revocation (the actual gap this closes) ---------
+
+
+def test_bearer_logout_actually_revokes_the_token(client):
+    """The behavior change this feature makes: previously a Bearer logout was a
+    no-op beyond the 204 -- the same token kept authenticating until it expired."""
+    token = login(client).json()["access_token"]
+    assert client.get(ME, headers={"Authorization": f"Bearer {token}"}).status_code == 200
+
+    client.post(LOGOUT, headers={"Authorization": f"Bearer {token}"})
+
+    response = client.get(ME, headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+    assert code_of(response) == "not_authenticated"
+
+
+def test_cookie_logout_revokes_the_underlying_token_not_just_the_cookie(client, settings):
+    """The cleared client-side cookie alone is not proof the *token* died -- replay
+    the exact JWT value logout issued to prove revocation (not just cookie
+    clearing) is what stops it, per the task's own verification requirement."""
+    csrf = login(client, client_type="browser").json()["csrf_token"]
+    issued_token = client.cookies[settings.session_cookie_name]
+
+    client.post(LOGOUT, headers={"X-CSRF-Token": csrf})
+    client.cookies.set(settings.session_cookie_name, issued_token)  # replay the dead token
+
+    response = client.get(ME)
+    assert response.status_code == 401
+    assert code_of(response) == "not_authenticated"
+
+
+def test_logout_revokes_only_the_presented_token_not_every_session_for_that_user(client):
+    """Two independent sessions for the same user; logging out one must not affect
+    the other."""
+    first_token = login(client, AGENT_EMAIL).json()["access_token"]
+    second_token = login(client, AGENT_EMAIL).json()["access_token"]
+    assert first_token != second_token
+
+    client.post(LOGOUT, headers={"Authorization": f"Bearer {first_token}"})
+
+    assert client.get(ME, headers={"Authorization": f"Bearer {first_token}"}).status_code == 401
+    assert client.get(ME, headers={"Authorization": f"Bearer {second_token}"}).status_code == 200
+
+
+def test_a_refused_logout_does_not_revoke_the_token(client):
+    """CSRF failure must short-circuit before revocation happens -- a rejected
+    logout leaves the session (and its token) alive, mirroring
+    test_a_refused_logout_leaves_the_session_alive above."""
+    csrf = login(client, client_type="browser").json()["csrf_token"]
+    issued_token = client.cookies[client.app.state.settings.session_cookie_name]
+
+    client.post(LOGOUT)  # no X-CSRF-Token -> 403, refused
+
+    client.cookies.set(client.app.state.settings.session_cookie_name, issued_token)
+    assert client.get(ME, headers={"X-CSRF-Token": csrf}).status_code == 200
 
 
 # --- OpenAPI surface ----------------------------------------------------------
