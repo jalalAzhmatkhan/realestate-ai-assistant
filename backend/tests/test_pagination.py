@@ -81,7 +81,13 @@ def client_factory(tmp_path):
     clients = []
 
     def build(**overrides):
-        app = create_app(make_db_settings(tmp_path, **overrides))
+        settings = make_db_settings(tmp_path, **overrides)
+        # Schema creation is `alembic upgrade head`'s job (see infra/backend/
+        # Dockerfile), not app/main.py's lifespan — this mimics that step having
+        # already run before the app starts, same pattern as test_deps.py's
+        # `settings` fixture and test_auth.py.
+        create_tables(build_engine(settings))
+        app = create_app(settings)
         _register_probe_routes(app)
         client = TestClient(app)
         client.__enter__()
