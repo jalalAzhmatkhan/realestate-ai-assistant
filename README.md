@@ -2,11 +2,19 @@
 
 A FastAPI backend that lets clients chat with an LLM-driven agent to get real-estate FAQ answers,
 search property listings, and book property viewings, while agents/admins get plain RBAC-protected
-CRUD APIs and a minimal admin page for user management and system-prompt editing. The agent's tool
+CRUD APIs consumed by a separate admin dashboard (see "Frontend" below). The agent's tool
 selection is entirely LLM-driven via native function-calling (Pydantic AI) — there is no keyword or
 if/else routing anywhere in the request path. Built as a single-service **modular monolith** whose
 internal module boundaries are designed to map 1:1 onto the distributed target architecture in
 [`../core components.md`](../core%20components.md) (see "Scaling to 100x" below).
+
+> **Frontend note:** the admin dashboard is a **separate React SPA** under `frontend/admin/`, not a
+> Jinja2 page inside this backend — see
+> [`Documentation/system-design/frontend-admin-dashboard.md`](../Documentation/system-design/frontend-admin-dashboard.md),
+> [`Documentation/ui-ux-design/admin-dashboard-ui-ux.md`](../Documentation/ui-ux-design/admin-dashboard-ui-ux.md),
+> and the checkpoint that resolved this
+> ([`Documentation/audits/2026-08-05-frontend-admin-spa-architecture.md`](../Documentation/audits/2026-08-05-frontend-admin-spa-architecture.md)).
+> This supersedes the `app/admin/*` Jinja2 module described in earlier drafts of this doc.
 
 ## Setup
 
@@ -57,17 +65,17 @@ realestate-ai-assistant/
   main.py                 # existing placeholder entrypoint (out of scope for this design pass)
   pyproject.toml
   seed_data/               # see "Seed Data" below
+  frontend/
+    admin/                 # separate React (Vite + TS) SPA — own package.json, see
+                            #   Documentation/system-design/frontend-admin-dashboard.md
   app/
     api/                   # HTTP layer: FastAPI routers, request/response wiring only
       deps.py              #   get_current_user / require_role() dependencies
-      auth.py              #   POST /auth/login
+      auth.py              #   POST /auth/login (+ Set-Cookie/CSRF for the SPA), GET /auth/me
       chat.py              #   POST /chat/messages — entrypoint into app/agent
       properties.py        #   property CRUD + read endpoints (RBAC-scoped)
       bookings.py          #   booking CRUD/list endpoints (RBAC-scoped)
       users.py             #   admin-only user management endpoints
-    admin/                 # minimal server-rendered admin UI (Jinja2), role=admin only
-      routes.py            #   GET/POST /admin/users, /admin/prompts, /admin/bookings
-      templates/
     agent/                 # the agentic core
       providers.py         #   LLM_PROVIDER -> Pydantic AI Model factory
       orchestrator.py      #   Agent construction, system prompt loading, run loop
@@ -130,7 +138,7 @@ reaching into another module's data model directly. This is what makes the "how 
 | `app/agent/tools/escalate_to_human.py` + `app/models/escalation.py` | New Escalation/Support routing capability (not in original `core components.md`; see Open Questions) | Extract once real human-agent routing/CRM integration exists |
 | `app/notifications/*` | Notification Service (queue consumer) | Swap `NotificationPort` implementation from `LogNotifier` to a queue publisher — callers never change |
 | `app/core/security.py` + `app/api/auth.py` + `app/models/user.py` | Auth Service | Extract when multiple services need centralized token issuance/validation |
-| `app/admin/*` | Not a separate service in the target architecture — RBAC-gated views composed over Auth (users) and the Orchestrator's prompt store (prompts) | Stays thin regardless of scale |
+| `frontend/admin/*` | Not a backend service — a separate SPA client of the same REST API every other client uses | Deployed/scaled independently (static hosting/CDN) regardless of backend extraction; see `Documentation/system-design/frontend-admin-dashboard.md` |
 | SQLite (dev) / single Postgres (prod-ish) via SQLModel | PostgreSQL + PostGIS (Property), separate Postgres per service after extraction | Swap `DATABASE_URL`; geo queries move from Python Haversine to `ST_DWithin` |
 | No Redis in MVP | Redis (session/cache) | Add once session state must be shared across many stateless instances |
 | `LogNotifier` (structured log line) | Kafka/RabbitMQ/SQS + Notification Service | Swap the `NotificationPort` implementation only |
@@ -244,15 +252,19 @@ publisher later touches only `app/notifications/`, nothing upstream.
 
 | Endpoint | Method | Roles | Purpose |
 |---|---|---|---|
-| `/api/v1/auth/login` | POST | any | Exchange email/password for a JWT |
+| `/api/v1/auth/login` | POST | any | Exchange email/password for a JWT; for the admin SPA, also sets an httpOnly session cookie + returns a CSRF token (see frontend system design doc) |
+| `/api/v1/auth/me` | GET | admin, agent, client | **New, flagged by the frontend system design doc** — returns the current user's id/role so the SPA can render role-aware UI without decoding the httpOnly cookie |
 | `/api/v1/chat/messages` | POST | admin, agent, client | Send a message to the agent; entrypoint to the tool-calling loop |
 | `/api/v1/properties` | GET | admin, agent, client | List/search properties (RBAC-scoped, see below) |
 | `/api/v1/properties` | POST/PUT/DELETE | admin, agent (own) | Manage listings |
 | `/api/v1/bookings` | GET | admin, agent (own), client (own) | List bookings |
 | `/api/v1/bookings/{id}/cancel` | POST | admin, agent (own), client (own) | Cancel a booking |
+| `/api/v1/bookings/{id}/reschedule` | POST | admin, agent (own), client (own) | **Gap, not yet designed** — needed by the admin dashboard's booking detail screen; see frontend system design doc §7 |
 | `/api/v1/users` | GET/POST/PATCH | admin | User management |
-| `/admin/users` | GET/POST | admin | Server-rendered user management page |
-| `/admin/prompts` | GET/POST | admin | Server-rendered system-prompt editor (versioned rows in `system_prompts`) |
+
+The admin dashboard (`frontend/admin/`) is a client of this same API — it has no dedicated backend
+routes of its own. See `Documentation/system-design/frontend-admin-dashboard.md` §7 for the full
+screen-to-endpoint mapping and outstanding contract gaps.
 
 ### Chat endpoint contract
 
@@ -370,7 +382,8 @@ avoid trivial abuse.
 
 ```mermaid
 flowchart TB
-    Client["Client (Web / Admin Browser)"]
+    Client["Client (chat consumer — web/mobile)"]
+    AdminSPA["Admin Dashboard<br/>(frontend/admin — separate React SPA, own deploy)"]
     LLM["External LLM API<br/>(OpenAI / Anthropic / Gemini — via LLM_PROVIDER)"]
     EMB["External/local Embedding model<br/>(via EMBEDDING_PROVIDER)"]
     DB[("SQLite / PostgreSQL, via SQLModel")]
@@ -379,17 +392,15 @@ flowchart TB
 
     subgraph App["FastAPI Application — single process, modular monolith"]
         Routers["app/api<br/>(auth, chat, properties, bookings, users)"]
-        Admin["app/admin<br/>(server-rendered pages)"]
         Orchestrator["app/agent<br/>(Pydantic AI Agent + 4 tools + provider factory)"]
         RAG["app/rag<br/>(in-process vector index)"]
         Core["app/core<br/>(config, JWT/RBAC, logging)"]
         Notif["app/notifications<br/>(NotificationPort: LogNotifier)"]
     end
 
-    Client -->|HTTPS + JWT| Routers
-    Client -->|HTTPS + JWT, role=admin| Admin
+    Client -->|HTTPS + Bearer JWT| Routers
+    AdminSPA -->|HTTPS + httpOnly cookie + CSRF token| Routers
     Routers --> Core
-    Admin --> Core
     Routers -->|message + AuthenticatedUser| Orchestrator
     Orchestrator -->|tool: search_faq| RAG
     Orchestrator -->|tools: SearchProperty, BookViewing, EscalateToHuman<br/>re-authorized via app/core| Routers
@@ -401,6 +412,10 @@ flowchart TB
     Routers --> Notif
     Notif -.->|MVP: structured log line| Log
 ```
+
+The admin dashboard is deployed and scaled independently of this backend (static hosting/CDN) — it's
+just another authenticated client of `app/api`, same as the chat-consuming client. See
+`Documentation/system-design/frontend-admin-dashboard.md` for its internal architecture.
 
 ## Booking Flow (`BookViewing` / `schedule_viewing`)
 
