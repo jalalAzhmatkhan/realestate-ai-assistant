@@ -28,9 +28,15 @@ def restore_root_logger():
 
 
 def make_settings(**overrides) -> Settings:
-    """Settings built from explicit values only — never from backend/.env."""
+    """Settings built from explicit values only — never from backend/.env.
+
+    jwt_secret_key defaults to 32+ chars so callers testing app_env="prod"
+    (e.g. docs_enabled, exception-envelope tests) don't also need to override
+    it just to clear the prod-only length check — that check gets its own
+    dedicated short-vs-long tests in test_config.py.
+    """
     values = {
-        "jwt_secret_key": "test-secret",
+        "jwt_secret_key": "test-secret-at-least-32-characters-long",
         "llm_provider": "openai",
         "cors_allowed_origins": "http://localhost:5173",
         **overrides,

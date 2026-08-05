@@ -279,6 +279,32 @@ def test_default_page_size_over_max_is_rejected():
     assert "MAX_PAGE_SIZE" in message
 
 
+# --- jwt_secret_key strength is only enforced in prod --------------------------
+
+
+def test_short_jwt_secret_key_is_accepted_in_dev():
+    settings = make_settings(app_env="dev", jwt_secret_key="dev-only-change-me")
+    assert settings.jwt_secret_key == "dev-only-change-me"
+
+
+def test_short_jwt_secret_key_is_rejected_in_prod():
+    with pytest.raises(ValidationError) as exc_info:
+        make_settings(app_env="prod", jwt_secret_key="too-short")
+
+    assert "JWT_SECRET_KEY" in str(exc_info.value)
+
+
+def test_jwt_secret_key_at_the_minimum_length_is_accepted_in_prod():
+    key = "a" * 32
+    settings = make_settings(app_env="prod", jwt_secret_key=key)
+    assert settings.jwt_secret_key == key
+
+
+def test_jwt_secret_key_one_below_the_minimum_is_rejected_in_prod():
+    with pytest.raises(ValidationError):
+        make_settings(app_env="prod", jwt_secret_key="a" * 31)
+
+
 def test_get_settings_is_cached(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "cached-secret")
     monkeypatch.setenv("LLM_PROVIDER", "openai")

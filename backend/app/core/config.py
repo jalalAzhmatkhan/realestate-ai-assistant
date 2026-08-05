@@ -5,6 +5,9 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+# PyJWT itself warns (InsecureKeyLengthWarning) below 32 bytes for HS256 — a key
+# shorter than its output size doesn't add the entropy the algorithm assumes.
+JWT_SECRET_KEY_MIN_LENGTH_PROD = 32
 
 
 class Settings(BaseSettings):
@@ -80,6 +83,20 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"DEFAULT_PAGE_SIZE ({self.default_page_size}) must not exceed "
                 f"MAX_PAGE_SIZE ({self.max_page_size})."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _jwt_secret_key_strong_enough_in_prod(self) -> "Settings":
+        # Only enforced in prod: a short, memorable secret (e.g. .env.example's
+        # "dev-only-change-me") is fine for local dev, where the cost of a weak
+        # key is nil. A prod deployment silently running on one is a real gap —
+        # this is the one place that combination was previously unvalidated.
+        if self.app_env == "prod" and len(self.jwt_secret_key) < JWT_SECRET_KEY_MIN_LENGTH_PROD:
+            raise ValueError(
+                f"JWT_SECRET_KEY must be at least {JWT_SECRET_KEY_MIN_LENGTH_PROD} "
+                f"characters when APP_ENV=prod (see README: `openssl rand -hex 32`). "
+                f"Shorter values are only accepted in APP_ENV=dev."
             )
         return self
 
