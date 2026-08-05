@@ -36,8 +36,14 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
 
+    # embedding_provider is deliberately independent of llm_provider (Anthropic
+    # has no embeddings API) — each provider gets its own model var, mirroring
+    # openai_model/anthropic_model/gemini_model above, and `embedding_model`
+    # below picks the one matching embedding_provider.
     embedding_provider: Literal["openai", "gemini", "local"] = "local"
-    embedding_model: str | None = None
+    openai_embedding_model: str = "text-embedding-3-small"
+    gemini_embedding_model: str = "text-embedding-004"
+    local_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     rag_top_k: int = Field(default=3, ge=1)
     rag_min_score: float = Field(default=0.55, ge=0.0, le=1.0)
@@ -51,11 +57,6 @@ class Settings(BaseSettings):
     @classmethod
     def _normalize_log_level_case(cls, value: str) -> str:
         return value.upper() if isinstance(value, str) else value
-
-    @field_validator("embedding_model", mode="before")
-    @classmethod
-    def _blank_embedding_model_is_provider_default(cls, value: str | None) -> str | None:
-        return value or None
 
     @field_validator("cors_allowed_origins")
     @classmethod
@@ -82,6 +83,19 @@ class Settings(BaseSettings):
                 f"MAX_PAGE_SIZE ({self.max_page_size})."
             )
         return self
+
+    @property
+    def embedding_model(self) -> str:
+        """The embedding model for the active embedding_provider — never llm_provider.
+
+        RAG must work regardless of which LLM_PROVIDER is chosen (Anthropic has
+        no embeddings API), so this follows embedding_provider exclusively.
+        """
+        return {
+            "openai": self.openai_embedding_model,
+            "gemini": self.gemini_embedding_model,
+            "local": self.local_embedding_model,
+        }[self.embedding_provider]
 
     @property
     def cors_origins(self) -> list[str]:

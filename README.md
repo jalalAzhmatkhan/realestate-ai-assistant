@@ -63,7 +63,9 @@ non-empty DB by default, but the flag gives an explicit kill switch).
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | if `LLM_PROVIDER=anthropic` | model default `claude-sonnet-4-5` | Anthropic credentials/model |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | if `LLM_PROVIDER=gemini` | model default `gemini-2.5-flash` | Gemini credentials/model |
 | `EMBEDDING_PROVIDER` | no | `local` | `openai` \| `gemini` \| `local` — **independent** of `LLM_PROVIDER`, see Design Decisions |
-| `EMBEDDING_MODEL` | no | provider-specific default | Embedding model name |
+| `OPENAI_EMBEDDING_MODEL` | no | `text-embedding-3-small` | Used only when `EMBEDDING_PROVIDER=openai` |
+| `GEMINI_EMBEDDING_MODEL` | no | `text-embedding-004` | Used only when `EMBEDDING_PROVIDER=gemini` |
+| `LOCAL_EMBEDDING_MODEL` | no | `sentence-transformers/all-MiniLM-L6-v2` | Used only when `EMBEDDING_PROVIDER=local` |
 | `RAG_TOP_K` | no | `3` | Default number of chunks `search_faq` retrieves |
 | `RAG_MIN_SCORE` | no | `0.55` | Cosine-similarity floor below which `search_faq` reports "no relevant answer" instead of forcing a low-confidence answer |
 | `DEFAULT_PAGE_SIZE` | no | `20` | Default `page_size` for list endpoints |

@@ -26,7 +26,9 @@ ANTHROPIC_MODEL=claude-sonnet-4-5
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-2.5-flash
 EMBEDDING_PROVIDER=local
-EMBEDDING_MODEL=
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+GEMINI_EMBEDDING_MODEL=text-embedding-004
+LOCAL_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 RAG_TOP_K=3
 RAG_MIN_SCORE=0.55
 DEFAULT_PAGE_SIZE=20
@@ -56,7 +58,10 @@ def test_loads_from_env_file(tmp_path):
     assert settings.anthropic_model == "claude-sonnet-4-5"
     assert settings.gemini_model == "gemini-2.5-flash"
     assert settings.embedding_provider == "local"
-    assert settings.embedding_model is None
+    assert settings.openai_embedding_model == "text-embedding-3-small"
+    assert settings.gemini_embedding_model == "text-embedding-004"
+    assert settings.local_embedding_model == "sentence-transformers/all-MiniLM-L6-v2"
+    assert settings.embedding_model == "sentence-transformers/all-MiniLM-L6-v2"
     assert settings.rag_top_k == 3
     assert settings.rag_min_score == 0.55
     assert settings.default_page_size == 20
@@ -94,7 +99,10 @@ def test_defaults_match_readme_when_only_required_vars_are_set():
     assert settings.anthropic_model == "claude-sonnet-4-5"
     assert settings.gemini_model == "gemini-2.5-flash"
     assert settings.embedding_provider == "local"
-    assert settings.embedding_model is None
+    assert settings.local_embedding_model == "sentence-transformers/all-MiniLM-L6-v2"
+    # LLM_PROVIDER=anthropic has no bearing on embedding_model — Anthropic has
+    # no embeddings API, so RAG must still resolve a usable model here.
+    assert settings.embedding_model == "sentence-transformers/all-MiniLM-L6-v2"
     assert settings.rag_top_k == 3
     assert settings.rag_min_score == 0.55
     assert settings.default_page_size == 20
@@ -208,14 +216,45 @@ def test_docs_disabled_in_prod():
     assert make_settings(app_env="prod").docs_enabled is False
 
 
-def test_blank_embedding_model_becomes_none():
-    assert make_settings(embedding_model="").embedding_model is None
+# --- embedding_model follows embedding_provider, never llm_provider --------
 
 
-def test_explicit_embedding_model_is_kept():
-    assert make_settings(embedding_model="text-embedding-3-small").embedding_model == (
-        "text-embedding-3-small"
+def test_embedding_model_follows_openai_provider():
+    settings = make_settings(
+        embedding_provider="openai", openai_embedding_model="custom-openai-embed"
     )
+    assert settings.embedding_model == "custom-openai-embed"
+
+
+def test_embedding_model_follows_gemini_provider():
+    settings = make_settings(
+        embedding_provider="gemini", gemini_embedding_model="custom-gemini-embed"
+    )
+    assert settings.embedding_model == "custom-gemini-embed"
+
+
+def test_embedding_model_follows_local_provider():
+    settings = make_settings(
+        embedding_provider="local", local_embedding_model="custom-local-embed"
+    )
+    assert settings.embedding_model == "custom-local-embed"
+
+
+@pytest.mark.parametrize("llm_provider", ["openai", "anthropic", "gemini"])
+def test_embedding_model_ignores_llm_provider(llm_provider):
+    """The regression this whole design exists to prevent: embedding_model
+    must not depend on llm_provider, since Anthropic has no embeddings API."""
+    settings = make_settings(
+        llm_provider=llm_provider,
+        embedding_provider="local",
+        local_embedding_model="always-this-one",
+    )
+    assert settings.embedding_model == "always-this-one"
+
+
+def test_embedding_provider_rejects_unknown_value():
+    with pytest.raises(ValidationError):
+        make_settings(embedding_provider="anthropic")
 
 
 @pytest.mark.parametrize(
