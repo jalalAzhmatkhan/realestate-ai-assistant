@@ -8,6 +8,12 @@ dependencies = [
     "fastapi>=0.115",
     "pydantic-settings>=2.5",
     "uvicorn[standard]>=0.32",
+    # Postgres driver for docker-compose's DATABASE_URL. Not yet consumed by
+    # any code — app/db/session.py (task B4, Phase 1) is what actually opens
+    # a connection. Added now so the Docker image builds against the driver
+    # the compose environment expects; may change if Phase 1 picks a
+    # different driver (e.g. asyncpg for an async engine).
+    "psycopg[binary]>=3.2",
 ]
 
 [dependency-groups]
