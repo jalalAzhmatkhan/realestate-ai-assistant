@@ -14,6 +14,17 @@ from app.models.escalation import (
     EscalationStatus,
     EscalationUrgency,
 )
+from app.models.observability import (
+    FAITHFULNESS_RATIONALE_MAX_LENGTH,
+    FaithfulnessCheck,
+    FaithfulnessClaim,
+    FaithfulnessStatus,
+    FaithfulnessVerdict,
+    RetrievalEvalCase,
+    RetrievalEvalRun,
+    RetrievalEvalRunStatus,
+    RetrievalLog,
+)
 from app.models.property import (
     ListingType,
     PriceUnit,
@@ -24,6 +35,7 @@ from app.models.property import (
 from app.models.user import User, UserRole, UserStatus
 
 __all__ = [
+    "FAITHFULNESS_RATIONALE_MAX_LENGTH",
     "AvailabilitySlot",
     "Booking",
     "BookingStatus",
@@ -32,6 +44,10 @@ __all__ = [
     "EscalationCategory",
     "EscalationStatus",
     "EscalationUrgency",
+    "FaithfulnessCheck",
+    "FaithfulnessClaim",
+    "FaithfulnessStatus",
+    "FaithfulnessVerdict",
     "ListingType",
     "Message",
     "MessageRole",
@@ -39,6 +55,10 @@ __all__ = [
     "Property",
     "PropertyStatus",
     "PropertyType",
+    "RetrievalEvalCase",
+    "RetrievalEvalRun",
+    "RetrievalEvalRunStatus",
+    "RetrievalLog",
     "SlotStatus",
     "User",
     "UserRole",

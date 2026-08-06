@@ -28,6 +28,11 @@ EXPECTED_TABLES = {
     "conversations",
     "messages",
     "escalations",
+    "retrieval_logs",
+    "retrieval_eval_runs",
+    "retrieval_eval_cases",
+    "faithfulness_checks",
+    "faithfulness_claims",
 }
 
 JAKARTA = timezone(timedelta(hours=7))

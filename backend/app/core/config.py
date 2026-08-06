@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     rag_top_k: int = Field(default=3, ge=1)
     rag_min_score: float = Field(default=0.55, ge=0.0, le=1.0)
 
+    # RAG observability. Both switches are off-by-absence-of-rows, never zeros: a
+    # disabled check writes nothing, so the admin page shows an empty state rather
+    # than a score that looks like a failing one.
+    retrieval_log_enabled: bool = True
+    faithfulness_check_enabled: bool = True
+    faithfulness_max_concurrent: int = Field(default=4, ge=1)
+    faithfulness_max_claims: int = Field(default=20, ge=1)
+    eval_set_max_cases: int = Field(default=60, ge=1)
+
     default_page_size: int = Field(default=20, ge=1)
     max_page_size: int = Field(default=100, ge=1)
 
