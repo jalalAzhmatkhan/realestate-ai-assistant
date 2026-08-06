@@ -5,7 +5,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { router } from './router'
 import { LOGIN_PATH } from '@/lib/api/session'
 import type { Role } from '@/lib/auth/types'
+import { json, mockApi } from '@/test/mockApi'
 import { buildUser, createTestQueryClient, renderApp } from '@/test/renderApp'
+import { buildUserPage } from '@/test/userFixtures'
 import { QueryClientProvider } from '@tanstack/react-query'
 
 describe('router', () => {
@@ -36,6 +38,9 @@ describe('router', () => {
   })
 
   it('renders /users for an admin', async () => {
+    // Stubbed because the screen behind the gate now fetches: an unstubbed list would
+    // reach for a real socket, and the point of this test is the gate, not the list.
+    mockApi({ 'GET /api/v1/users': () => json(200, buildUserPage([])) })
     renderApp({ user: buildUser('admin'), initialEntries: ['/users'] })
 
     expect(await screen.findByRole('heading', { name: 'Users' })).toBeVisible()

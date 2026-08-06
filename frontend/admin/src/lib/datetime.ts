@@ -40,6 +40,17 @@ export function formatSlotTimeLong(iso: string): string {
   return format(LONG, iso)
 }
 
+const DATE_ONLY = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+})
+
+/** A timestamp where only the day matters, e.g. `15 Jan 2026`. */
+export function formatDate(iso: string): string {
+  return format(DATE_ONLY, iso)
+}
+
 /** Value for an `<input type="datetime-local">`, in the viewer's own timezone. */
 export function toDateTimeLocalValue(iso: string): string {
   const instant = new Date(iso)

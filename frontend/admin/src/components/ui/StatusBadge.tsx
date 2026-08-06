@@ -1,7 +1,8 @@
 import { BOOKING_STATUS_LABELS, type BookingStatus } from '@/lib/bookings/types'
 import { PROPERTY_STATUS_LABELS, type PropertyStatus } from '@/lib/properties/types'
+import { USER_STATUS_LABELS, type UserStatus } from '@/lib/users/types'
 
-export type BadgeStatus = PropertyStatus | BookingStatus
+export type BadgeStatus = PropertyStatus | BookingStatus | UserStatus
 
 /**
  * Colors are UI/UX §4's fixed mapping, which defines property and booking statuses in
@@ -9,7 +10,8 @@ export type BadgeStatus = PropertyStatus | BookingStatus
  * `sold`/`cancelled` muted red. The label is always rendered alongside, never color
  * alone (§6), so the badge survives a color-blind reader and a greyscale print.
  *
- * The two status unions are disjoint, which is what lets one map serve both.
+ * The unions overlap on `active` only, where a live listing and an enabled account mean
+ * the same thing and read the same green — which is what lets one map serve all three.
  */
 const STYLES: Record<BadgeStatus, string> = {
   active: 'bg-green-100 text-green-800 ring-green-600/20',
@@ -23,11 +25,15 @@ const STYLES: Record<BadgeStatus, string> = {
   // terminal red `cancelled` uses: a completed viewing is a success, and painting the
   // two the same would make a scanned column read as if every past booking fell through.
   completed: 'bg-blue-50 text-blue-800 ring-blue-600/20',
+  // Also outside §4's table. Grey, the same as `draft`: a disabled account is dormant
+  // and reversible, not a failure — red would read as an error beside the green rows.
+  disabled: 'bg-slate-100 text-slate-700 ring-slate-500/20',
 }
 
 const LABELS: Record<BadgeStatus, string> = {
   ...PROPERTY_STATUS_LABELS,
   ...BOOKING_STATUS_LABELS,
+  ...USER_STATUS_LABELS,
 }
 
 export default function StatusBadge({ status }: { status: BadgeStatus }) {
