@@ -17,16 +17,17 @@ from app.agent.orchestrator import build_agent
 from app.db.session import build_engine, create_tables
 from app.main import create_app
 from app.models import Message, RetrievalLog, User
-from app.rag.index import FaqEntry, FaqIndex
+from app.rag.index import FaqEntry
 
 from .conftest import SEED_PASSWORD, make_db_settings
+from .rag_doubles import InMemoryFaqIndex
 from .test_agent import RecordingNotifier, StubEmbeddingModel
 from .test_chat_api import CHAT, CLIENT_EMAIL, LOGIN, scripted
 
 
 @pytest.fixture
 def faq_index():
-    return FaqIndex(
+    return InMemoryFaqIndex(
         StubEmbeddingModel(),
         [
             FaqEntry(

@@ -13,10 +13,8 @@ be able to tell them apart — "we have no confirmed answer" leads to an escalat
 an error leads to an apology and, historically, to the model answering from memory anyway.
 """
 
-import asyncio
 import json
 
-import numpy as np
 import pytest
 
 from app.core.config import Settings
@@ -25,7 +23,7 @@ from app.rag.embeddings import (
     EmbeddingConfigurationError,
     build_embedding_model,
 )
-from app.rag.index import FaqEntry, FaqIndex, build_faq_index, load_faq_entries
+from app.rag.index import FaqEntry, FaqIndex, load_faq_entries
 
 from .conftest import SEED_DATA_DIR, make_settings
 from .test_agent import (  # noqa: F401  -- fixtures, consumed by pytest injection
@@ -140,123 +138,46 @@ def test_anthropic_llm_plus_local_embeddings_needs_no_api_key_at_all():
 
 
 # ------------------------------------------------------------------------- the index
-
-
-def test_the_index_is_built_lazily_not_at_construction():
-    """Embedding 14 documents at import/boot would make an API key a startup requirement
-    for a service that may never receive a chat request."""
-    index = FaqIndex(StubEmbeddingModel(), [FaqEntry("f1", "q", "a", "c", ("t",))])
-
-    assert index.size == 1
-    assert not index.is_built
-
-
-@pytest.mark.anyio
-async def test_the_first_search_triggers_the_build():
-    index = FaqIndex(StubEmbeddingModel(), [FaqEntry("f1", "deposit?", "one month", "fees")])
-
-    await index.search("deposit", top_k=1, min_score=0.1)
-
-    assert index.is_built
-
-
-@pytest.mark.anyio
-async def test_concurrent_first_searches_embed_the_corpus_only_once():
-    """The lock exists so N simultaneous cold-start requests do not each pay for a full
-    corpus embedding — N times the latency and, on a hosted provider, N times the bill."""
-
-    class CountingEmbeddings(StubEmbeddingModel):
-        def __init__(self):
-            self.document_batches = 0
-
-        async def embed(self, inputs, *, input_type, settings=None):
-            if input_type == "document":
-                self.document_batches += 1
-                await asyncio.sleep(0.01)  # widens the race the lock has to close
-            return await super().embed(inputs, input_type=input_type, settings=settings)
-
-    embeddings = CountingEmbeddings()
-    index = FaqIndex(
-        embeddings,
-        [FaqEntry(f"f{i}", "deposit?", "one month", "fees") for i in range(3)],
-    )
-
-    await asyncio.gather(*(index.search("deposit", top_k=1, min_score=0.1) for _ in range(8)))
-
-    assert embeddings.document_batches == 1
+#
+# `FaqIndex` is now a thin, per-request, pgvector-backed object (B32/B33) — it holds no
+# corpus and does no in-process "build", so the properties the old NumPy index's own
+# mechanics used to earn here (lazy build, a lock against concurrent first-builds, an
+# empty corpus answering cleanly, a zero-length row scoring 0.0 rather than NaN) no
+# longer describe anything that ships. Their replacements:
+#
+# * Score-floor/ranking correctness against the real thing: the activated Q9 equivalence
+#   tests in `tests/test_rag_baseline.py`, run against a real Postgres.
+# * A zero-norm embedding: rejected at *index* time now, not scored at *query* time —
+#   `tests/test_rag_baseline.py::test_the_reindex_command_rejects_a_zero_norm_embedding`.
+# * An empty corpus: inverted on purpose — an unpopulated `faq_embeddings` for the
+#   configured embedding model now *raises* (`EmptyFaqIndexError`), not searches cleanly
+#   — `tests/test_rag_baseline.py::test_an_empty_index_raises_rather_than_returning_no_results`.
+#
+# What is still worth pinning here, with no database at all: the blank-query short
+# circuit, which must never touch the embedding provider *or* the database.
 
 
 @pytest.mark.anyio
-async def test_below_the_score_floor_is_an_empty_list_not_an_exception():
-    """The contract's central distinction. A raise here would be indistinguishable, to
-    the model, from the embedding provider being down."""
-    index = FaqIndex(StubEmbeddingModel(), [FaqEntry("f1", "deposit?", "one month", "fees")])
+async def test_a_blank_query_returns_nothing_without_calling_the_provider_or_the_database():
+    class ExplodingEmbeddingModel:
+        model_name = "should-not-be-used"
 
-    hits = await index.search("parking", top_k=3, min_score=0.5)
+        async def embed(self, *args, **kwargs):
+            raise AssertionError("embed() must not be called for a blank query")
 
-    assert hits == []
+    class ExplodingSession:
+        def execute(self, *args, **kwargs):
+            raise AssertionError("the database must not be queried for a blank query")
 
-
-@pytest.mark.anyio
-async def test_the_floor_is_inclusive_and_filters_only_what_falls_under_it():
-    index = FaqIndex(
-        StubEmbeddingModel(),
-        [
-            FaqEntry("f-deposit", "deposit?", "one month", "fees", ("deposit",)),
-            FaqEntry("f-pet", "pet?", "with consent", "policy", ("pet",)),
-        ],
-    )
-
-    both = await index.search("deposit pet", top_k=5, min_score=0.1)
-    neither = await index.search("deposit pet", top_k=5, min_score=0.99)
-
-    assert {hit.entry.id for hit in both} == {"f-deposit", "f-pet"}
-    assert neither == []
-
-
-@pytest.mark.anyio
-async def test_an_unembeddable_entry_scores_zero_rather_than_poisoning_the_ranking():
-    """A zero-length vector would divide by zero in normalization. NaN does not stay
-    local: it makes every comparison against it false, so one bad row silently reorders
-    the whole result set."""
-    index = FaqIndex(
-        StubEmbeddingModel(),
-        [
-            FaqEntry("f-blank", "", "", "misc"),  # no vocabulary word -> zero vector
-            FaqEntry("f-deposit", "deposit?", "one month", "fees", ("deposit",)),
-        ],
-    )
-
-    hits = await index.search("deposit", top_k=5, min_score=-1.0)
-
-    scores = {hit.entry.id: hit.score for hit in hits}
-    assert not any(np.isnan(score) for score in scores.values())
-    assert scores["f-blank"] == 0.0
-    assert scores["f-deposit"] > 0.0
-
-
-@pytest.mark.anyio
-async def test_an_empty_corpus_searches_cleanly_and_never_builds():
-    """An empty index is a legitimate state, so it must answer rather than raise."""
-    index = FaqIndex(StubEmbeddingModel(), [])
-
-    assert await index.search("anything", top_k=3, min_score=0.1) == []
-    assert not index.is_built
-
-
-@pytest.mark.anyio
-async def test_a_blank_query_returns_nothing_without_calling_the_provider():
-    index = FaqIndex(StubEmbeddingModel(), [FaqEntry("f1", "deposit?", "one month", "fees")])
+    index = FaqIndex(ExplodingEmbeddingModel(), ExplodingSession())
 
     assert await index.search("   ", top_k=3, min_score=0.1) == []
 
 
-def test_a_missing_corpus_file_yields_an_empty_index_not_a_crash(tmp_path):
-    """The FAQ corpus going missing must degrade the FAQ answer, not take down the agent
-    — `search_faq` is one of five tools and the other four are unaffected."""
-    index = build_faq_index(StubEmbeddingModel(), tmp_path)
-
-    assert index.size == 0
+def test_a_missing_corpus_file_yields_no_entries_not_a_crash(tmp_path):
+    """The FAQ corpus file going missing must degrade the FAQ answer, not take down the
+    agent — `search_faq` is one of five tools and the other four are unaffected."""
+    assert load_faq_entries(tmp_path) == []
 
 
 def test_the_seeded_corpus_loads_with_the_fields_the_index_embeds():

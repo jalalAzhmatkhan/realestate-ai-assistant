@@ -14,6 +14,7 @@ from app.models.escalation import (
     EscalationStatus,
     EscalationUrgency,
 )
+from app.models.faq_embedding import FaqEmbedding
 from app.models.observability import (
     FAITHFULNESS_RATIONALE_MAX_LENGTH,
     FaithfulnessCheck,
@@ -44,6 +45,7 @@ __all__ = [
     "EscalationCategory",
     "EscalationStatus",
     "EscalationUrgency",
+    "FaqEmbedding",
     "FaithfulnessCheck",
     "FaithfulnessClaim",
     "FaithfulnessStatus",

@@ -32,7 +32,7 @@ from app.core.exceptions import DomainError
 from app.models import Conversation, Message, RetrievalLog, User
 from app.observability.faithfulness import collect_context, run_faithfulness_check
 from app.rag.embeddings import build_embedding_model
-from app.rag.index import FaqIndex, build_faq_index
+from app.rag.index import FaqIndex, FaqRetriever
 from app.schemas.chat import ChatMessageRequest, ChatMessageResponse, ToolCallRecord
 
 logger = logging.getLogger(__name__)
@@ -96,14 +96,22 @@ def get_judge_model(request: Request) -> Model:
     return model
 
 
-def get_faq_index(request: Request) -> FaqIndex:
-    """One index per application instance; embeddings are computed on first search."""
-    index = request.app.state.faq_index
-    if index is None:
-        settings: Settings = request.app.state.settings
-        index = build_faq_index(build_embedding_model(settings), settings.seed_data_dir)
-        request.app.state.faq_index = index
-    return index
+def get_faq_index(request: Request, db: Session) -> FaqRetriever:
+    """A test-injected ``FaqRetriever`` double (``create_app(faq_index=...)``) is
+    returned unchanged. Otherwise: a fresh, cheap, per-request ``FaqIndex`` — the
+    expensive part (``app.state.embedding_model``) is built once and reused across every
+    request; only the DB session is genuinely per-request.
+    """
+    injected = request.app.state.faq_index
+    if injected is not None:
+        return injected
+
+    settings: Settings = request.app.state.settings
+    embedding_model = request.app.state.embedding_model
+    if embedding_model is None:
+        embedding_model = build_embedding_model(settings)
+        request.app.state.embedding_model = embedding_model
+    return FaqIndex(embedding_model, db)
 
 
 def _resolve_conversation(
@@ -238,7 +246,7 @@ async def post_message(
         user=user,
         db=db,
         conversation_id=conversation.id,
-        rag=get_faq_index(request),
+        rag=get_faq_index(request, db),
         settings=settings,
         notifier=notifier,
     )

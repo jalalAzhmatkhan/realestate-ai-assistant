@@ -42,9 +42,10 @@ from app.notifications.port import (
     EscalationCreatedEvent,
 )
 from app.property.queries import scoped_property_query
-from app.rag.index import FaqEntry, FaqIndex
+from app.rag.index import FaqEntry
 
 from .conftest import make_db_settings, make_settings
+from .rag_doubles import InMemoryFaqIndex
 
 NOW = datetime.now(timezone.utc)
 T1 = NOW + timedelta(days=1)
@@ -296,7 +297,7 @@ def notifier():
 
 @pytest.fixture
 def faq_index():
-    return FaqIndex(
+    return InMemoryFaqIndex(
         StubEmbeddingModel(),
         [
             FaqEntry(

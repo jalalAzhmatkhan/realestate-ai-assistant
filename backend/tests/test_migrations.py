@@ -31,6 +31,7 @@ from app.db.session import build_engine, create_tables
 from app.main import create_app
 
 from .conftest import SEED_DATA_DIR, SEED_PASSWORD
+from .postgres_support import POSTGRES_TEST_DATABASE_URL, require_postgres
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_TABLES = {
@@ -64,12 +65,12 @@ def head_revision() -> str:
     return ScriptDirectory.from_config(config).get_current_head()
 
 
-def run_alembic(db_path: Path, *args: str) -> subprocess.CompletedProcess:
+def run_alembic_url(database_url: str, *args: str) -> subprocess.CompletedProcess:
     """Never inherits DATABASE_URL/JWT_SECRET_KEY/LLM_PROVIDER from the developer's
     shell or backend/.env — env.py's `get_settings()` would otherwise pick them up."""
     env = {
         **os.environ,
-        "DATABASE_URL": f"sqlite:///{db_path.as_posix()}",
+        "DATABASE_URL": database_url,
         "JWT_SECRET_KEY": "migration-test-secret-at-least-32-chars",
         "LLM_PROVIDER": "openai",
         "CORS_ALLOWED_ORIGINS": "http://localhost:5173",
@@ -81,6 +82,10 @@ def run_alembic(db_path: Path, *args: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
     )
+
+
+def run_alembic(db_path: Path, *args: str) -> subprocess.CompletedProcess:
+    return run_alembic_url(f"sqlite:///{db_path.as_posix()}", *args)
 
 
 def upgrade_head(db_path: Path) -> subprocess.CompletedProcess:
@@ -263,6 +268,9 @@ def test_the_app_serves_requests_against_an_alembic_migrated_database(tmp_path):
         llm_provider="openai",
         seed_data_dir=SEED_DATA_DIR,
         session_cookie_secure=False,
+        # SQLite never has faq_embeddings (B32) — see make_settings' docstring in
+        # tests/conftest.py for why every non-RAG test disables this.
+        rag_index_on_startup=False,
     )
 
     with TestClient(create_app(settings)) as client:
@@ -306,3 +314,179 @@ def test_alembic_targets_database_url_not_the_ini_placeholder(tmp_path):
 
     assert db_path.exists()
     assert EXPECTED_TABLES <= set(reflect(db_path))
+
+
+# --- Postgres-only: faq_embeddings (B32) ----------------------------------------
+#
+# Everything above this point runs against SQLite, where `faq_embeddings` never exists
+# (see `alembic/env.py`'s `include_object` filter and `create_tables()`'s dialect
+# branch) — this migration is a deliberate no-op for that table on SQLite. This section
+# is the other half of the parity story: the same migrated-vs-create_all() check, this
+# time on Postgres, where the table *should* exist identically on both sides, plus a
+# couple of schema-shape assertions specific to the checkpoint's design decisions (no
+# ANN index; a genuinely un-dimensioned `vector` column). Every test below skips loudly,
+# never silently, when Postgres is unreachable — see `tests/postgres_support.py`.
+
+POSTGRES_MIGRATION_TEST_DB = "realestate_migration_test"
+POSTGRES_CREATE_ALL_TEST_DB = "realestate_migration_test_create_all"
+
+
+def _admin_dsn() -> str:
+    # The `postgres` maintenance database always exists; used only to CREATE/DROP the
+    # throwaway test databases below without ever connecting to the one being dropped.
+    base = POSTGRES_TEST_DATABASE_URL.replace("postgresql+psycopg://", "postgresql://")
+    return base.rsplit("/", 1)[0] + "/postgres"
+
+
+def _url_for_db(db_name: str) -> str:
+    return POSTGRES_TEST_DATABASE_URL.rsplit("/", 1)[0] + f"/{db_name}"
+
+
+def _recreate_database(db_name: str) -> None:
+    import psycopg
+
+    with psycopg.connect(_admin_dsn(), autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            "WHERE datname = %s AND pid <> pg_backend_pid()",
+            (db_name,),
+        )
+        cur.execute(f'DROP DATABASE IF EXISTS "{db_name}"')
+        cur.execute(f'CREATE DATABASE "{db_name}"')
+
+
+def _pg_reflect(database_url: str, table: str) -> dict:
+    from sqlalchemy import create_engine, inspect
+
+    engine = create_engine(database_url)
+    try:
+        inspector = inspect(engine)
+        return {
+            "columns": sorted((c["name"], c["nullable"]) for c in inspector.get_columns(table)),
+            "unique_constraints": sorted(
+                tuple(sorted(uc["column_names"]))
+                for uc in inspector.get_unique_constraints(table)
+            ),
+            "indexes": sorted(
+                (ix["unique"], tuple(sorted(ix["column_names"])))
+                for ix in inspector.get_indexes(table)
+            ),
+            "pk": sorted(inspector.get_pk_constraint(table)["constrained_columns"]),
+        }
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture(scope="module")
+def postgres_migrated_db() -> str:
+    require_postgres()
+    _recreate_database(POSTGRES_MIGRATION_TEST_DB)
+    database_url = _url_for_db(POSTGRES_MIGRATION_TEST_DB)
+    result = run_alembic_url(database_url, "upgrade", "head")
+    assert result.returncode == 0, result.stderr
+    return database_url
+
+
+@pytest.fixture(scope="module")
+def postgres_create_all_db() -> str:
+    require_postgres()
+    _recreate_database(POSTGRES_CREATE_ALL_TEST_DB)
+    database_url = _url_for_db(POSTGRES_CREATE_ALL_TEST_DB)
+    settings = Settings(
+        _env_file=None,
+        database_url=database_url,
+        jwt_secret_key="migration-test-secret-at-least-32-chars",
+        llm_provider="openai",
+    )
+    create_tables(build_engine(settings))
+    return database_url
+
+
+def test_faq_embeddings_exists_on_postgres_after_upgrade_head(postgres_migrated_db):
+    schema = _pg_reflect(postgres_migrated_db, "faq_embeddings")
+    assert {name for name, _nullable in schema["columns"]} == {
+        "id",
+        "faq_id",
+        "embedding_model",
+        "dimensions",
+        "content_hash",
+        "document",
+        "question",
+        "answer",
+        "category",
+        "embedding",
+        "indexed_at",
+    }
+    assert schema["pk"] == ["id"]
+
+
+def test_faq_embeddings_has_the_faq_id_embedding_model_unique_constraint(postgres_migrated_db):
+    schema = _pg_reflect(postgres_migrated_db, "faq_embeddings")
+    assert ("embedding_model", "faq_id") in schema["unique_constraints"]
+
+
+def test_faq_embeddings_has_no_ann_index(postgres_migrated_db):
+    """The checkpoint's correctness decision, checked directly: only a plain btree index
+    on `embedding_model` — no HNSW/IVFFlat on `embedding`. An ANN index here would make
+    Recall@K (Phase 7) measure the index's own recall convolved with embedding quality,
+    which is exactly the confound the checkpoint says not to introduce."""
+    schema = _pg_reflect(postgres_migrated_db, "faq_embeddings")
+    # The primary key and the unique constraint each back their own index; anything
+    # beyond those two is what this migration explicitly created.
+    other_indexes = [
+        ix
+        for ix in schema["indexes"]
+        if ix[1] not in (("id",), ("embedding_model", "faq_id"))
+    ]
+    assert other_indexes == [(False, ("embedding_model",))]
+
+
+def test_faq_embeddings_matches_create_all_on_postgres(postgres_migrated_db, postgres_create_all_db):
+    """The parity check SQLite cannot run for this table (it never has `faq_embeddings`
+    at all) — on Postgres, where the table exists on both sides, migrated and
+    `create_all()` schemas must still agree exactly, the same property
+    `test_migrated_table_matches_create_all` asserts for every other table."""
+    assert _pg_reflect(postgres_migrated_db, "faq_embeddings") == _pg_reflect(
+        postgres_create_all_db, "faq_embeddings"
+    )
+
+
+def test_the_un_dimensioned_vector_column_accepts_and_ranks_real_vectors(postgres_migrated_db):
+    """The primary path the checkpoint asked to be verified before falling back to a
+    required `EMBEDDING_DIMENSIONS`/`vector(n)`: a bare `vector` column really does accept
+    (and correctly rank via `<=>`) vectors, proven end to end against a real Postgres
+    rather than only asserted from the column's declared type."""
+    import psycopg
+
+    conninfo = postgres_migrated_db.replace("postgresql+psycopg://", "postgresql://")
+    with psycopg.connect(conninfo, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO faq_embeddings "
+                "(id, faq_id, embedding_model, dimensions, content_hash, document, "
+                " question, answer, category, embedding, indexed_at) VALUES "
+                "('t-a', 'f-a', 'probe', 3, 'h', 'doc', 'q', 'a', 'c', '[1,0,0]', now()), "
+                "('t-b', 'f-b', 'probe', 3, 'h', 'doc', 'q', 'a', 'c', '[0,1,0]', now())"
+            )
+            cur.execute(
+                "SELECT faq_id, 1 - (embedding <=> CAST(%s AS vector)) AS score "
+                "FROM faq_embeddings WHERE embedding_model = 'probe' "
+                "ORDER BY embedding <=> CAST(%s AS vector)",
+                ("[1,0,0]", "[1,0,0]"),
+            )
+            rows = cur.fetchall()
+            cur.execute("DELETE FROM faq_embeddings WHERE embedding_model = 'probe'")
+
+    assert rows == [("f-a", 1.0), ("f-b", 0.0)]
+
+
+def test_upgrade_head_on_postgres_is_re_runnable(postgres_migrated_db):
+    """Matches the SQLite-side `test_upgrade_head_on_an_already_migrated_database_is_a_no_op`
+    — the Dockerfile entrypoint runs `alembic upgrade head` on every container start, not
+    only the first, and Postgres is the dialect that actually matters in production."""
+    before = _pg_reflect(postgres_migrated_db, "faq_embeddings")
+
+    result = run_alembic_url(postgres_migrated_db, "upgrade", "head")
+
+    assert result.returncode == 0, result.stderr
+    assert _pg_reflect(postgres_migrated_db, "faq_embeddings") == before

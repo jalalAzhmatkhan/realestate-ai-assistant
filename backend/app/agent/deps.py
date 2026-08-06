@@ -19,7 +19,7 @@ from sqlmodel import Session
 from app.core.config import Settings
 from app.models import User
 from app.notifications.port import NotificationPort
-from app.rag.index import FaqIndex
+from app.rag.index import FaqRetriever
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ class AgentDeps:
     """The conversation this run belongs to. ``escalate_to_human`` ties its record to
     this, so a user cannot escalate a session that is not theirs."""
 
-    rag: FaqIndex
+    rag: FaqRetriever
     settings: Settings
     notifier: NotificationPort
 
