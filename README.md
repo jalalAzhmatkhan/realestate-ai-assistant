@@ -413,13 +413,14 @@ below.
 | `/api/v1/chat/messages` | POST | admin, agent, client | Send a message to the agent; entrypoint to the tool-calling loop |
 | `/api/v1/properties` | GET | admin, agent, client | List/search properties (paginated + filtered, RBAC-scoped, see below) |
 | `/api/v1/properties/{id}` | GET | admin, agent, client | One listing in full (`PropertyDetail`), scoped to what the caller may *see*, not what they may edit |
-| `/api/v1/properties` | POST/PUT/DELETE | admin, agent (own) | Manage listings |
+| `/api/v1/properties` | POST | admin, agent (own) | Create a listing |
+| `/api/v1/properties/{id}` | PUT/DELETE | admin, agent (own) | Update / deactivate a listing |
 | `/api/v1/bookings` | GET | admin, agent (own), client (own) | List bookings (paginated + filtered, RBAC-scoped) |
 | `/api/v1/bookings/{id}` | GET | admin, agent (own), client (own) | One booking |
 | `/api/v1/bookings/{id}/cancel` | POST | admin, agent (own), client (own) | Cancel a booking |
 | `/api/v1/bookings/{id}/reschedule` | POST | admin, agent (own), client (own) | Move a booking to a different slot, keeping the same `booking_id` |
-| `/api/v1/users` | GET/POST/PATCH | admin | User management (list is paginated + filtered) |
-| `/api/v1/users/{id}` | GET | admin | One user |
+| `/api/v1/users` | GET/POST | admin | List users (paginated + filtered) / create a user |
+| `/api/v1/users/{id}` | GET/PATCH | admin | Read / update a user |
 
 The admin dashboard (`frontend/admin/`) is a client of this same API — it has no dedicated backend
 routes of its own. See `Documentation/system-design/frontend-admin-dashboard.md` §7 for the full

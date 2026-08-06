@@ -265,6 +265,60 @@ def test_sorting_by_slot_time_honours_the_direction(client):
     assert ascending == sorted(ascending)
 
 
+# ------------------------------------------------------ single-item read: GET /{id}
+
+
+@pytest.mark.parametrize("email", [CLIENT1_EMAIL, AGENT1_EMAIL, ADMIN_EMAIL])
+def test_every_party_to_a_booking_can_read_it_by_id(client, email):
+    """``qa-rest-booking`` is client-1's, conducted by agent-1 — the same scope that lets
+    each of them cancel it lets each of them read it."""
+    response = client.get(f"{BOOKINGS}/qa-rest-booking", headers=bearer(client, email))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["booking_id"] == "qa-rest-booking"
+
+
+@pytest.mark.parametrize(
+    ("email", "booking_id"),
+    [
+        (CLIENT1_EMAIL, "qa-rest-blocker"),
+        (CLIENT1_EMAIL, "booking-does-not-exist"),
+        (CLIENT2_EMAIL, "qa-rest-booking"),
+        (AGENT2_EMAIL, "qa-rest-booking"),
+        (AGENT2_EMAIL, "booking-does-not-exist"),
+        (ADMIN_EMAIL, "booking-does-not-exist"),
+    ],
+)
+def test_an_out_of_scope_or_nonexistent_booking_reads_as_one_404(
+    client, email, booking_id
+):
+    """Same posture as cancel and reschedule: never ``403``, so the read path does not
+    become the enumeration oracle the write path closed."""
+    response = client.get(f"{BOOKINGS}/{booking_id}", headers=bearer(client, email))
+
+    assert response.status_code == 404
+    assert code_of(response) == "booking_not_found"
+
+
+def test_the_single_read_returns_the_same_shape_as_a_list_row(client):
+    """Bookings have no summary/detail split — the list item type is already the whole
+    record, so a detail fetch adds no fields."""
+    headers = bearer(client, CLIENT1_EMAIL)
+    row = next(
+        item
+        for item in client.get(BOOKINGS, headers=headers).json()["results"]
+        if item["booking_id"] == "qa-rest-booking"
+    )
+
+    detail = client.get(f"{BOOKINGS}/qa-rest-booking", headers=headers).json()
+
+    assert detail == row
+
+
+def test_reading_one_booking_requires_authentication(client):
+    assert client.get(f"{BOOKINGS}/qa-rest-booking").status_code == 401
+
+
 # ------------------------------------------------------- out-of-scope resolution: 404
 
 

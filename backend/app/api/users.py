@@ -92,6 +92,22 @@ def list_users(
     return page
 
 
+@router.get("/{user_id}", response_model=UserResponse)
+def get_user(user_id: str, admin: AdminUser, db: DbSession) -> UserResponse:
+    """One user, in the same shape a list row carries.
+
+    A plain primary-key lookup: users carry no per-record scope, so the role gate above
+    is the whole authorization. An unknown id is ``404`` — the ``403`` a non-admin gets
+    is role-level denial of the endpoint, decided before this body runs.
+    """
+    user = db.get(User, user_id)
+    if user is None:
+        raise UserNotFoundError()
+
+    logger.info("user_read", extra={"user_id": admin.id, "read_user_id": user.id})
+    return UserResponse.from_user(user)
+
+
 @router.post("", response_model=UserResponse, status_code=201)
 def create_user(payload: UserCreateRequest, admin: AdminUser, db: DbSession) -> UserResponse:
     """Create a user. The password is hashed here and never echoed back."""
