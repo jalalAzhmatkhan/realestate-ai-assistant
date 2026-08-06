@@ -16,16 +16,19 @@ reschedule test that silently starts asserting ``slot_time_in_past`` once those 
 elapse is worse than no test.
 """
 
+import logging
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 from sqlmodel import Session
 
 from app.agent.deps import AgentDeps
 from app.db.session import build_engine, create_tables
 from app.main import create_app
-from app.models import AvailabilitySlot, Booking, User
+from app.models import AvailabilitySlot, Booking, Property, User
 
 from .conftest import make_db_settings, make_settings
 from .test_agent import RecordingNotifier, run_tool
@@ -317,6 +320,215 @@ def test_the_single_read_returns_the_same_shape_as_a_list_row(client):
 
 def test_reading_one_booking_requires_authentication(client):
     assert client.get(f"{BOOKINGS}/qa-rest-booking").status_code == 401
+
+
+# --------------------------------------------------- denormalized names on the response
+
+
+NAME_FIELDS = ("property_title", "client_name", "agent_name")
+
+
+def expected_names(engine, booking_id: str) -> dict[str, str]:
+    """The names read straight from the referenced rows, so the assertions track the
+    seed/fixture data instead of restating it."""
+    with Session(engine) as session:
+        booking = session.get(Booking, booking_id)
+        return {
+            "property_title": session.get(Property, booking.property_id).title,
+            "client_name": session.get(User, booking.client_id).name,
+            "agent_name": session.get(User, booking.agent_id).name,
+        }
+
+
+def names_in(payload: dict) -> dict[str, str]:
+    return {field: payload[field] for field in NAME_FIELDS}
+
+
+@pytest.mark.parametrize("email", [CLIENT1_EMAIL, AGENT1_EMAIL, ADMIN_EMAIL])
+def test_a_booking_read_carries_the_property_and_party_names(client, email):
+    """A ``client``/``agent`` cannot call ``GET /users/{id}`` to resolve these ids, so the
+    booking payload is their only source for the names their screens render."""
+    response = client.get(f"{BOOKINGS}/qa-rest-booking", headers=bearer(client, email))
+
+    assert response.status_code == 200, response.text
+    assert names_in(response.json()) == expected_names(
+        client.app.state.engine, "qa-rest-booking"
+    )
+
+
+def test_every_listed_row_carries_the_names_of_its_own_booking(client):
+    """Resolved in one batch for the whole page — this is what catches a row/name
+    mismatch, which a single-row assertion cannot see."""
+    response = client.get(
+        BOOKINGS, params={"page_size": 50}, headers=bearer(client, ADMIN_EMAIL)
+    )
+    results = response.json()["results"]
+
+    assert len(results) > 1
+    for item in results:
+        assert names_in(item) == expected_names(
+            client.app.state.engine, item["booking_id"]
+        )
+
+
+def test_cancel_answers_with_the_names_too(client):
+    expected = expected_names(client.app.state.engine, "qa-rest-booking")
+
+    response = client.post(
+        f"{BOOKINGS}/qa-rest-booking/cancel", headers=bearer(client, CLIENT1_EMAIL)
+    )
+
+    assert response.status_code == 200, response.text
+    assert names_in(response.json()) == expected
+
+
+def test_reschedule_answers_with_the_names_too(client):
+    """``BookingRescheduleResponse`` extends ``BookingResponse``, so the move keeps every
+    field the list row has, ``previous_slot_time`` aside."""
+    expected = expected_names(client.app.state.engine, "qa-rest-booking")
+
+    response = reschedule(
+        client, "qa-rest-booking", T_FREE, bearer(client, CLIENT1_EMAIL)
+    )
+
+    assert response.status_code == 200, response.text
+    assert names_in(response.json()) == expected
+
+
+def admin_page(client) -> dict[str, dict]:
+    response = client.get(
+        BOOKINGS, params={"page_size": 50}, headers=bearer(client, ADMIN_EMAIL)
+    )
+    return {item["booking_id"]: item for item in response.json()["results"]}
+
+
+def test_two_rows_on_one_property_share_its_title_without_leaking_it_to_a_third(client):
+    """A property has many viewings, so one page routinely holds several rows pointing at
+    the same listing — the case a per-row assertion passes on by accident."""
+    with Session(client.app.state.engine) as session:
+        title = session.get(Property, REST_PROPERTY).title
+    page = admin_page(client)
+
+    assert page["qa-rest-booking"]["property_title"] == title
+    assert page["qa-rest-blocker"]["property_title"] == title
+    assert page["booking-002"]["property_id"] != REST_PROPERTY
+    assert page["booking-002"]["property_title"] != title
+
+
+def test_a_user_who_is_a_client_on_one_row_and_an_agent_on_another_is_not_crossed(
+    client,
+):
+    """The client and agent ids are resolved through a single union query, so a user
+    occupying both roles across a page must land in the right column on each row. No
+    seeded booking produces this, hence the fixture row."""
+    with Session(client.app.state.engine) as session:
+        session.add(
+            AvailabilitySlot(
+                id="qa-dual-slot", agent_id=AGENT1, property_id=REST_PROPERTY,
+                slot_time=NOW + timedelta(days=6), status="booked",
+            )
+        )
+        session.flush()
+        session.add(
+            Booking(
+                id="qa-dual-booking", availability_slot_id="qa-dual-slot",
+                property_id=REST_PROPERTY, client_id=AGENT2, agent_id=AGENT1,
+                slot_time=NOW + timedelta(days=6), status="confirmed",
+            )
+        )
+        agent1_name = session.get(User, AGENT1).name
+        agent2_name = session.get(User, AGENT2).name
+        session.commit()
+
+    page = admin_page(client)
+
+    # u-agent-2 is this row's *client*, and seeded booking-002's *agent*
+    assert page["qa-dual-booking"]["client_name"] == agent2_name
+    assert page["qa-dual-booking"]["agent_name"] == agent1_name
+    assert page["booking-002"]["agent_name"] == agent2_name
+    assert page["booking-002"]["client_name"] != agent2_name
+
+
+BOOKING_READS = {
+    "list": lambda c, h: next(
+        item
+        for item in c.get(BOOKINGS, headers=h).json()["results"]
+        if item["booking_id"] == "qa-rest-booking"
+    ),
+    "get": lambda c, h: c.get(f"{BOOKINGS}/qa-rest-booking", headers=h).json(),
+    "cancel": lambda c, h: c.post(f"{BOOKINGS}/qa-rest-booking/cancel", headers=h).json(),
+    "reschedule": lambda c, h: reschedule(c, "qa-rest-booking", T_FREE, h).json(),
+}
+
+
+@pytest.mark.parametrize("read", BOOKING_READS.values(), ids=list(BOOKING_READS))
+def test_the_names_are_read_at_query_time_not_copied_onto_the_booking(client, read):
+    """Renaming the referenced rows *after* the booking exists must change every
+    endpoint's answer — the moment these become stored columns instead, this fails."""
+    with Session(client.app.state.engine) as session:
+        session.get(Property, REST_PROPERTY).title = "Renamed Listing"
+        session.get(User, CLIENT1).name = "Renamed Client"
+        session.get(User, AGENT1).name = "Renamed Agent"
+        session.commit()
+
+    payload = read(client, bearer(client, CLIENT1_EMAIL))
+
+    assert names_in(payload) == {
+        "property_title": "Renamed Listing",
+        "client_name": "Renamed Client",
+        "agent_name": "Renamed Agent",
+    }
+    # a reschedule moves the slot, never the parties whose names these are
+    assert payload["property_id"] == REST_PROPERTY
+    assert payload["client_id"] == CLIENT1
+    assert payload["agent_id"] == AGENT1
+
+
+@pytest.mark.parametrize("column", ["property_id", "client_id", "agent_id"])
+def test_a_booking_pointing_at_a_missing_row_fails_loudly(client, settings, column, caplog):
+    """The name maps are indexed directly, with no ``.get()`` fallback, because all three
+    ids are non-null foreign keys. Should that invariant ever break — a bad migration, a
+    manual ``DELETE`` — the deliberate outcome is a logged ``500``, never a blank or
+    wrong name silently rendered as fact. Written through a raw connection because the
+    app engine enforces ``PRAGMA foreign_keys=ON`` (``app/db/session.py``)."""
+    headers = bearer(client, ADMIN_EMAIL)
+    connection = sqlite3.connect(settings.database_url.removeprefix("sqlite:///"))
+    connection.execute(
+        f"UPDATE bookings SET {column} = 'gone' WHERE id = 'qa-rest-booking'"
+    )
+    connection.commit()
+    connection.close()
+
+    with caplog.at_level(logging.ERROR):
+        one = client.get(f"{BOOKINGS}/qa-rest-booking", headers=headers)
+        listed = client.get(BOOKINGS, params={"page_size": 50}, headers=headers)
+
+    assert one.status_code == 500 and listed.status_code == 500
+    assert one.json()["detail"]["code"] == "internal_error"
+    # the envelope stays opaque; the diagnosis goes to the log
+    assert "gone" not in one.text
+    assert any("KeyError" in record.exc_text for record in caplog.records if record.exc_text)
+
+
+def test_the_names_cost_two_queries_for_the_whole_page(client):
+    """The guard on the N+1 the batch exists to avoid: three lookups per row would pass
+    every assertion above while quietly scaling with page size."""
+    headers = bearer(client, ADMIN_EMAIL)  # log in outside the recording window
+    statements: list[str] = []
+
+    @event.listens_for(client.app.state.engine, "before_cursor_execute")
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    client.get(BOOKINGS, params={"page_size": 50}, headers=headers)
+    event.remove(client.app.state.engine, "before_cursor_execute", record)
+
+    properties_read = [s for s in statements if "FROM properties" in s]
+    users_read = [s for s in statements if "FROM users" in s]
+
+    assert len(properties_read) == 1, properties_read
+    # one for the authenticated caller, one for the page's whole client|agent union
+    assert len(users_read) == 2, users_read
 
 
 # ------------------------------------------------------- out-of-scope resolution: 404

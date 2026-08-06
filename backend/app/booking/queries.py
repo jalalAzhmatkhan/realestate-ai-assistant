@@ -17,10 +17,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Sequence
 
-from sqlmodel import col, select
+from sqlmodel import Session, col, select
 from sqlmodel.sql.expression import SelectOfScalar
 
-from app.models import Booking, BookingStatus, User
+from app.models import Booking, BookingStatus, Property, User
 
 
 def scoped_booking_query(user: User) -> SelectOfScalar[Booking]:
@@ -38,6 +38,59 @@ def scoped_booking_query(user: User) -> SelectOfScalar[Booking]:
     if user.role == "agent":
         return statement.where(col(Booking.agent_id) == user.id)
     return statement.where(col(Booking.client_id) == user.id)
+
+
+@dataclass(frozen=True)
+class BookingNames:
+    """The three display strings ``BookingResponse`` denormalizes onto a booking row
+    (``2026-08-06-booking-response-name-denormalization.md``): an ``agent`` or ``client``
+    cannot resolve the ids themselves, since ``GET /users/{id}`` is admin-only."""
+
+    property_title: str
+    client_name: str
+    agent_name: str
+
+
+def resolve_booking_names(
+    db: Session, bookings: Sequence[Booking]
+) -> dict[str, BookingNames]:
+    """Names for a whole page of bookings in two queries, keyed by booking id.
+
+    Batched rather than per row because ``Booking`` declares no ``relationship()`` (see
+    ``app/db/seed.py``) — resolving inline would be three lookups per row. Indexing the
+    maps directly is safe: ``property_id``/``client_id``/``agent_id`` are all non-null
+    foreign keys, so the referenced rows exist.
+    """
+    if not bookings:
+        return {}
+
+    titles = {
+        prop.id: prop.title
+        for prop in db.exec(
+            select(Property).where(
+                col(Property.id).in_({booking.property_id for booking in bookings})
+            )
+        ).all()
+    }
+    names = {
+        user.id: user.name
+        for user in db.exec(
+            select(User).where(
+                col(User.id).in_(
+                    {booking.client_id for booking in bookings}
+                    | {booking.agent_id for booking in bookings}
+                )
+            )
+        ).all()
+    }
+    return {
+        booking.id: BookingNames(
+            property_title=titles[booking.property_id],
+            client_name=names[booking.client_id],
+            agent_name=names[booking.agent_id],
+        )
+        for booking in bookings
+    }
 
 
 @dataclass(frozen=True)
