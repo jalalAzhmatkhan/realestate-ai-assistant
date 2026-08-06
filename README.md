@@ -50,6 +50,10 @@ Then edit `backend/.env` and set at minimum:
 - `EMBEDDING_PROVIDER` (`openai` | `gemini` | `local`) and its matching `*_EMBEDDING_MODEL` — this is
   **independent** of `LLM_PROVIDER` (see Design Decisions below); `local` needs no API key at all and is
   the default.
+- `RAG_MIN_SCORE` — if you set `EMBEDDING_PROVIDER=openai`, lower this to **`0.40`** (the code default,
+  `0.55`, is calibrated for `local` and is too strict for `openai`'s real score distribution — see the
+  footnote on the `RAG_MIN_SCORE` row below for why). Otherwise `search_faq` will silently report "no
+  relevant answer" for FAQ questions it actually should have answered.
 
 `frontend/admin/.env` only matters for non-Docker `npm run dev` — the containerized frontend build gets
 `VITE_API_BASE_URL` baked in as a build arg (`docker-compose.yml`'s `frontend` service, resolved through
@@ -139,7 +143,7 @@ at startup instead of inserting into tables that were never created.
 | `GEMINI_EMBEDDING_MODEL` | no | `text-embedding-004` | Used only when `EMBEDDING_PROVIDER=gemini` |
 | `LOCAL_EMBEDDING_MODEL` | no | `sentence-transformers/all-MiniLM-L6-v2` | Used only when `EMBEDDING_PROVIDER=local` |
 | `RAG_TOP_K` | no | `3` | Default number of chunks `search_faq` retrieves |
-| `RAG_MIN_SCORE` | no | `0.55` | Cosine-similarity floor below which `search_faq` reports "no relevant answer" instead of forcing a low-confidence answer |
+| `RAG_MIN_SCORE` | no | `0.55` | Cosine-similarity floor below which `search_faq` reports "no relevant answer" instead of forcing a low-confidence answer[^rag-min-score-openai] |
 | `RAG_INDEX_ON_STARTUP` | no | `true` | Run the idempotent FAQ reindex during app startup. No-op and no embedding calls when the index is current |
 | `DEFAULT_PAGE_SIZE` | no | `20` | Default `page_size` for list endpoints |
 | `MAX_PAGE_SIZE` | no | `100` | Hard ceiling for `page_size`; larger values are rejected (422), not silently clamped |
@@ -156,6 +160,17 @@ at startup instead of inserting into tables that were never created.
 
 `.env.example` (to be created by the Backend Engineer alongside implementation, at `backend/.env.example`)
 should enumerate all of the above with safe dev defaults and empty API key placeholders.
+
+[^rag-min-score-openai]: `0.55` is the design-time default, calibrated assuming the local
+  `sentence-transformers` embedding model. In practice against real production traffic with
+  `EMBEDDING_PROVIDER=openai` (`text-embedding-3-small`), that floor is too strict for realistic
+  paraphrased questions — the correct FAQ entry consistently ranks first but scores well under `0.55`
+  (e.g. a real "Can I bring my cat to the property?" query scored `0.41` against faq-004, the correct
+  pet-policy entry). Recommend setting **`RAG_MIN_SCORE=0.40`** in `backend/.env` when running with
+  `EMBEDDING_PROVIDER=openai`, confirmed via live verification to correctly answer questions that a
+  `0.55`/`0.65` floor was silently rejecting as "no relevant answer." This is a per-deployment tuning
+  value, not a code change — the `0.55` code default is left as-is here since the right floor is a
+  function of the configured embedding provider, and `local`/`gemini` may calibrate differently.
 
 ## Module Layout
 
