@@ -199,6 +199,20 @@ def test_retrieval_logs_invalid_date_range_is_422(client):
     assert code_of(response) == "invalid_date_range"
 
 
+def test_retrieval_logs_top_score_sort_puts_nulls_last_both_directions(client):
+    engine = client.app.state.engine
+    turn = seeded_turn(engine)
+    seed_retrieval_log(engine, turn, query_text="a", top_score=0.9, results=[{"rank": 1, "faq_id": "faq-001", "question": "q", "category": "c", "score": 0.9}])
+    seed_retrieval_log(engine, turn, query_text="b", top_score=None, results=[])
+    seed_retrieval_log(engine, turn, query_text="c", top_score=0.2, results=[{"rank": 1, "faq_id": "faq-001", "question": "q", "category": "c", "score": 0.2}])
+
+    ascending = client.get(LOGS, headers=bearer(client, ADMIN_EMAIL), params={"sort": "top_score"})
+    assert [r["top_score"] for r in ascending.json()["results"]] == [0.2, 0.9, None]
+
+    descending = client.get(LOGS, headers=bearer(client, ADMIN_EMAIL), params={"sort": "-top_score"})
+    assert [r["top_score"] for r in descending.json()["results"]] == [0.9, 0.2, None]
+
+
 # --- evaluation runs -------------------------------------------------------------
 
 
@@ -266,6 +280,21 @@ def test_eval_run_history_and_detail_round_trip(client):
     detail = client.get(f"{EVAL_RUNS}/{created['id']}", headers=bearer(client, ADMIN_EMAIL))
     assert detail.status_code == 200
     assert len(detail.json()["cases"]) == created["case_count"]
+
+
+def test_eval_run_mrr_sort_puts_nulls_last_both_directions(client):
+    # tiers=["negative"] has no paraphrase cases, so graded_case_count == 0 and mrr is
+    # null; tiers=["paraphrase"] always has a real (non-null) mrr.
+    null_run = client.post(EVAL_RUNS, headers=bearer(client, ADMIN_EMAIL), json={"tiers": ["negative"]}).json()
+    scored_run = client.post(EVAL_RUNS, headers=bearer(client, ADMIN_EMAIL), json={"tiers": ["paraphrase"]}).json()
+    assert null_run["mrr"] is None
+    assert scored_run["mrr"] is not None
+
+    ascending = client.get(EVAL_RUNS, headers=bearer(client, ADMIN_EMAIL), params={"sort": "mrr"})
+    assert ascending.json()["results"][-1]["id"] == null_run["id"]
+
+    descending = client.get(EVAL_RUNS, headers=bearer(client, ADMIN_EMAIL), params={"sort": "-mrr"})
+    assert descending.json()["results"][-1]["id"] == null_run["id"]
 
 
 def test_eval_run_detail_unknown_id_is_404(client):
