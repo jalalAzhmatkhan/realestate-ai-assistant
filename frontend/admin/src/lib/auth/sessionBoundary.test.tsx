@@ -337,7 +337,7 @@ describe('contract fidelity probe', () => {
     expect(screen.queryByLabelText('Password')).not.toHaveAttribute('aria-invalid')
   })
 
-  it('a client lands past /login and is stopped only by AppLayout', async () => {
+  it('a client lands past /login straight into the shell, at the Chat screen only', async () => {
     mockBackend({
       '/api/v1/auth/login': () => loginOk('client'),
       '/api/v1/auth/me': () => json(200, buildUser('client', { email: EMAIL })),
@@ -346,13 +346,14 @@ describe('contract fidelity probe', () => {
 
     await submitCredentials()
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
-    // Past /login: the route really changed, so the gate is AppLayout's, not the form's.
+    // Past /login: the route really changed, so this is AppLayout admitting `client`,
+    // not the form's own redirect.
+    await screen.findByRole('navigation', { name: 'Main' })
     expect(router.state.location.pathname).toBe('/')
+    expect(screen.getByRole('link', { name: 'Chat' })).toBeVisible()
+    expect(screen.queryByRole('link', { name: 'Properties' })).not.toBeInTheDocument()
     expect(client.getQueryData<{ role: string }>(currentUserQueryKey)?.role).toBe('client')
     expect(getCsrfToken()).toBe('tok')
-    // The staff gate has its own logout affordance (D4 fix) rather than leaving a
-    // client stuck with a live session and no visible way to end it.
     expect(screen.getByRole('button', { name: 'Log out' })).toBeVisible()
   })
 
@@ -365,7 +366,20 @@ describe('contract fidelity probe', () => {
 
     await submitCredentials()
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
+    expect(await screen.findByText(/cannot access this app/)).toBeVisible()
+    expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument()
+  })
+
+  it('an inactive client account is stopped by the same gate', async () => {
+    mockBackend({
+      '/api/v1/auth/login': () => loginOk('client'),
+      '/api/v1/auth/me': () => json(200, buildUser('client', { email: EMAIL, status: 'disabled' })),
+    })
+    renderApp({ initialEntries: ['/login'] })
+
+    await submitCredentials()
+
+    expect(await screen.findByText(/cannot access this app/)).toBeVisible()
     expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument()
   })
 })

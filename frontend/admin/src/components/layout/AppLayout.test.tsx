@@ -42,18 +42,26 @@ describe('AppLayout', () => {
     expect(await screen.findByText('agent')).toBeVisible()
   })
 
-  it('sends a client to the chat surface instead of the shell', async () => {
+  it('admits a client to the shell, showing only the Chat nav item', async () => {
+    // Chatting with the agent is this product's actual purpose, and this app is the only
+    // real chat surface that exists — a `client` gets the normal shell, not the wrong-app
+    // screen, but the nav only ever shows them one item (`components/layout/navItems.ts`).
     renderApp({ user: buildUser('client') })
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
-    expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument()
+    await screen.findByRole('navigation', { name: 'Main' })
+    expect(screen.getByRole('link', { name: 'Chat' })).toBeVisible()
+    expect(screen.queryByRole('link', { name: 'Properties' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Bookings' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Chat Inspector' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/cannot access this app/)).not.toBeInTheDocument()
   })
 
   it('still offers a way to end the session from the wrong-app screen', async () => {
-    // This screen renders before <TopBar>, so without its own logout affordance a
-    // client who signs in successfully would be stuck with a live session and no
-    // visible way to end it short of typing /login.
-    renderApp({ user: buildUser('client') })
+    // This screen renders before <TopBar>, so without its own logout affordance an
+    // account stuck here (an unrecognized role, or a disabled account) would have a
+    // live session and no visible way to end it short of typing /login.
+    renderApp({ user: buildUserWithRole('superadmin') })
 
     expect(await screen.findByRole('button', { name: 'Log out' })).toBeVisible()
   })
@@ -119,7 +127,7 @@ describe('AppLayout access gate fails safe', () => {
   it('denies an unknown role instead of rendering the staff shell', async () => {
     renderApp({ user: buildUserWithRole('superadmin') })
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
+    expect(await screen.findByText(/cannot access this app/)).toBeVisible()
     expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument()
   })
 
@@ -128,7 +136,7 @@ describe('AppLayout access gate fails safe', () => {
     delete user.role
     renderApp({ user: user as unknown as CurrentUser })
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
+    expect(await screen.findByText(/cannot access this app/)).toBeVisible()
     expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument()
   })
 
@@ -138,14 +146,14 @@ describe('AppLayout access gate fails safe', () => {
     // render means that upstream check did not fire.
     renderApp({ user: buildUser('admin', { status: 'disabled' }) })
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
+    expect(await screen.findByText(/cannot access this app/)).toBeVisible()
     expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument()
   })
 
   it('denies a disabled agent', async () => {
     renderApp({ user: buildUser('agent', { status: 'disabled' }) })
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
+    expect(await screen.findByText(/cannot access this app/)).toBeVisible()
     expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument()
   })
 
@@ -154,7 +162,7 @@ describe('AppLayout access gate fails safe', () => {
     // documents today, which is the point: a new one must opt in, not be admitted by default.
     renderApp({ user: buildUser('admin', { status: 'suspended' }) })
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
+    expect(await screen.findByText(/cannot access this app/)).toBeVisible()
   })
 
   it('denies a payload with no status at all', async () => {
@@ -162,6 +170,15 @@ describe('AppLayout access gate fails safe', () => {
     delete user.status
     renderApp({ user: user as unknown as CurrentUser })
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
+    expect(await screen.findByText(/cannot access this app/)).toBeVisible()
+  })
+
+  it('denies a disabled client, whose role alone would otherwise now pass', async () => {
+    // The `status` check is unconditional — admitting `client` past the role half of the
+    // gate must not also skip the status half.
+    renderApp({ user: buildUser('client', { status: 'disabled' }) })
+
+    expect(await screen.findByText(/cannot access this app/)).toBeVisible()
+    expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument()
   })
 })

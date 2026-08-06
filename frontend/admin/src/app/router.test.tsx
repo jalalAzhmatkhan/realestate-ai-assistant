@@ -91,12 +91,17 @@ describe('router', () => {
  * it from inside the shell.
  */
 describe('router guards against typed URLs', () => {
-  it('shows a client the wrong-app screen at /users, not the users screen', async () => {
-    renderApp({ user: buildUser('client'), initialEntries: ['/users'] })
+  it('bounces a client off /users to the dashboard with a reason, same as a staff bounce', async () => {
+    // `client` reaches the shell now (Chat is a real screen for them) — `/users` is still
+    // staff-only, enforced by its own <RoleGate>, exactly like the agent case above.
+    const { router: memoryRouter } = renderApp({
+      user: buildUser('client'),
+      initialEntries: ['/users'],
+    })
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
-    expect(screen.queryByRole('heading', { name: 'Users' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible()
+    expect(screen.getByRole('alert')).toHaveTextContent('You do not have access to /users.')
+    expect(memoryRouter.state.location.pathname).toBe('/')
   })
 
   it('shows an unknown role the wrong-app screen at /users', async () => {
@@ -105,7 +110,7 @@ describe('router guards against typed URLs', () => {
       initialEntries: ['/users'],
     })
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
+    expect(await screen.findByText(/cannot access this app/)).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'Users' })).not.toBeInTheDocument()
   })
 
@@ -118,10 +123,11 @@ describe('router guards against typed URLs', () => {
     expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument()
   })
 
-  it('blocks a client at an unmatched deep URL', async () => {
+  it('keeps a client inside the shell at an unmatched deep URL too', async () => {
     renderApp({ user: buildUser('client'), initialEntries: ['/totally/unknown/deep/path'] })
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
+    await screen.findByRole('navigation', { name: 'Main' })
+    expect(screen.getByRole('heading', { name: 'Page not found' })).toBeVisible()
   })
 })
 

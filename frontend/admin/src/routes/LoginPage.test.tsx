@@ -199,7 +199,7 @@ describe('LoginPage', () => {
     })
   })
 
-  it('leaves a client on the staff gate rather than deciding role at the form', async () => {
+  it('redirects a client the same way as any other role — AppLayout decides what renders next, not the form', async () => {
     mockBackend({
       '/api/v1/auth/login': () => loginOk('client'),
       '/api/v1/auth/me': () => json(200, buildUser('client', { email: EMAIL })),
@@ -208,7 +208,10 @@ describe('LoginPage', () => {
 
     await submitCredentials()
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
-    expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument()
+    // The form always redirects to `/` regardless of role; AppLayout is what decides a
+    // `client` gets the shell (with only Chat in nav) rather than the staff screens —
+    // see `lib/auth/sessionBoundary.test.tsx` for that decision's own coverage.
+    await screen.findByRole('navigation', { name: 'Main' })
+    expect(screen.getByRole('link', { name: 'Chat' })).toBeVisible()
   })
 })

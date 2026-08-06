@@ -1,30 +1,18 @@
-import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useState, type FormEvent, type KeyboardEvent } from 'react'
 
 import Button from '@/components/ui/Button'
 import EmptyState from '@/components/ui/EmptyState'
 import ErrorState from '@/components/ui/ErrorState'
 import LoadingState from '@/components/ui/LoadingState'
-import { MAX_CHAT_MESSAGE_LENGTH, useSendChatMessage, type ChatToolCall } from '@/lib/chatInspector/chat'
-
-interface Turn {
-  id: string
-  message: string
-  status: 'pending' | 'done' | 'error'
-  reply: string
-  toolCalls: ChatToolCall[]
-  error: unknown
-}
-
-function pendingTurn(id: string, message: string): Turn {
-  return { id, message, status: 'pending', reply: '', toolCalls: [], error: undefined }
-}
+import { MAX_CHAT_MESSAGE_LENGTH } from '@/lib/chat/chat'
+import { useChatTurns, type ChatTurn } from '@/lib/chat/useChatTurns'
 
 /**
  * Admin-only internal debugging view: sends a message through the same
  * `POST /chat/messages` every chat-capable client calls, and always shows the
  * `tool_calls` trace the backend returns alongside the reply. This is explicitly not a
- * polished customer-facing chat UI — there is no such surface in this dashboard, and
- * staff should never mistake this for it.
+ * polished customer-facing chat UI — see `routes/ChatPage.tsx` for that — and staff
+ * should never mistake this for it.
  *
  * The trace is never collapsed behind a toggle: it is the entire reason this screen
  * exists. CLAUDE.md forbids any hardcoded routing to a tool — the model decides via
@@ -36,47 +24,14 @@ function pendingTurn(id: string, message: string): Turn {
  * `<RoleGate>` keeps other roles off this path as UX, not as the security boundary.
  */
 export default function ChatInspectorPage() {
-  const [turns, setTurns] = useState<Turn[]>([])
-  const [conversationId, setConversationId] = useState<string | null>(null)
+  const { turns, pending, sendMessage, retryTurn, startNewConversation } = useChatTurns()
   const [draft, setDraft] = useState('')
-  const send = useSendChatMessage()
-  const nextTurnId = useRef(0)
-
-  const pending = turns.some((turn) => turn.status === 'pending')
-
-  function runTurn(turnId: string, message: string) {
-    send.mutate(
-      { conversation_id: conversationId, message },
-      {
-        onSuccess: (data) => {
-          setConversationId(data.conversation_id)
-          setTurns((prev) =>
-            prev.map((turn) =>
-              turn.id === turnId
-                ? { ...turn, status: 'done', reply: data.reply, toolCalls: data.tool_calls }
-                : turn,
-            ),
-          )
-        },
-        onError: (error) => {
-          setTurns((prev) =>
-            prev.map((turn) => (turn.id === turnId ? { ...turn, status: 'error', error } : turn)),
-          )
-        },
-      },
-    )
-  }
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
-    const message = draft.trim()
-    if (!message || pending) return
-
-    nextTurnId.current += 1
-    const turnId = `turn-${String(nextTurnId.current)}`
-    setTurns((prev) => [...prev, pendingTurn(turnId, message)])
+    if (!draft.trim() || pending) return
+    sendMessage(draft)
     setDraft('')
-    runTurn(turnId, message)
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -88,25 +43,6 @@ export default function ChatInspectorPage() {
     }
   }
 
-  function retryTurn(turn: Turn) {
-    setTurns((prev) => prev.map((t) => (t.id === turn.id ? { ...t, status: 'pending' } : t)))
-    runTurn(turn.id, turn.message)
-  }
-
-  /**
-   * Resets `conversation_id` to `null` and clears the transcript, rather than just
-   * clearing the screen: the backend keys history off `conversation_id`
-   * (`app/api/chat.py`, `_resolve_conversation`), so a tester who wants the agent to
-   * genuinely forget prior turns — not just stop looking at them — needs both to reset
-   * together, and leaving one behind would make "New conversation" lie about what it did.
-   * Disabled mid-flight so it can't orphan a request whose turn no longer exists on screen.
-   */
-  function startNewConversation() {
-    setConversationId(null)
-    setTurns([])
-    setDraft('')
-  }
-
   return (
     <div className="flex h-full flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -116,7 +52,14 @@ export default function ChatInspectorPage() {
             Internal — test the agent, not a customer view.
           </p>
         </div>
-        <Button variant="secondary" disabled={pending} onClick={startNewConversation}>
+        <Button
+          variant="secondary"
+          disabled={pending}
+          onClick={() => {
+            startNewConversation()
+            setDraft('')
+          }}
+        >
           New conversation
         </Button>
       </div>
@@ -170,7 +113,7 @@ export default function ChatInspectorPage() {
   )
 }
 
-function TurnView({ turn, onRetry }: { turn: Turn; onRetry: () => void }) {
+function TurnView({ turn, onRetry }: { turn: ChatTurn; onRetry: () => void }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-3">
       <p className="text-sm text-slate-900">
