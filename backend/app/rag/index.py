@@ -90,6 +90,7 @@ class FaqIndex:
     def __init__(self, embedding_model: EmbeddingModel, entries: list[FaqEntry]) -> None:
         self._embedding_model = embedding_model
         self._entries = entries
+        self._by_id = {entry.id: entry for entry in entries}
         self._vectors: np.ndarray | None = None
         # Guards the build so N concurrent first-requests don't each pay for a full
         # corpus embedding (and N times the API bill).
@@ -106,6 +107,14 @@ class FaqIndex:
     @property
     def embedding_model_name(self) -> str:
         return self._embedding_model.model_name
+
+    def get(self, faq_id: str) -> FaqEntry | None:
+        """Entry text by id, for callers holding only what a search returned.
+
+        Retrieval records identify a hit but do not carry its answer body; the
+        faithfulness check needs that body as the context it judges against.
+        """
+        return self._by_id.get(faq_id)
 
     async def ensure_built(self) -> None:
         if self._vectors is not None or not self._entries:

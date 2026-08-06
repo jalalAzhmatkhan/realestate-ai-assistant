@@ -18,6 +18,7 @@ from app.rag.index import FaqIndex
 
 if TYPE_CHECKING:
     from pydantic_ai import Agent
+    from pydantic_ai.models import Model
 
 API_V1_PREFIX = "/api/v1"
 
@@ -28,6 +29,7 @@ def create_app(
     agent: "Agent[AgentDeps, str] | None" = None,
     faq_index: FaqIndex | None = None,
     notifier: NotificationPort | None = None,
+    judge_model: "Model | None" = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings)
@@ -69,6 +71,8 @@ def create_app(
     app.state.agent = agent
     app.state.faq_index = faq_index
     app.state.notifier = notifier
+    # Same lazy contract as `agent`: built on the first turn that actually needs judging.
+    app.state.judge_model = judge_model
 
     # Order matters: the catch-all registered here must end up *inside* CORSMiddleware
     # so its 500 responses still flow out through CORS header injection.

@@ -15,10 +15,11 @@ Design Decisions §5).
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 from pydantic_ai import Agent, UsageLimitExceeded
 from pydantic_ai.exceptions import AgentRunError
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
+from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from sqlmodel import Session, col, select
 
@@ -29,6 +30,7 @@ from app.api.deps import CurrentUser, DbSession, NotifierDep, SettingsDep
 from app.core.config import Settings
 from app.core.exceptions import DomainError
 from app.models import Conversation, Message, RetrievalLog, User
+from app.observability.faithfulness import collect_context, run_faithfulness_check
 from app.rag.embeddings import build_embedding_model
 from app.rag.index import FaqIndex, build_faq_index
 from app.schemas.chat import ChatMessageRequest, ChatMessageResponse, ToolCallRecord
@@ -78,6 +80,20 @@ def get_agent(request: Request) -> Agent[AgentDeps, str]:
         agent = build_agent(build_llm_model(request.app.state.settings))
         request.app.state.agent = agent
     return agent
+
+
+def get_judge_model(request: Request) -> Model:
+    """The faithfulness judge's model — the same provider plumbing the agent uses.
+
+    Built lazily and cached exactly like the agent, and for the same reason: a deployment
+    with no LLM key must still boot and serve the REST surface. A test injects its own via
+    ``create_app(settings, judge_model=...)``.
+    """
+    model = request.app.state.judge_model
+    if model is None:
+        model = build_llm_model(request.app.state.settings)
+        request.app.state.judge_model = model
+    return model
 
 
 def get_faq_index(request: Request) -> FaqIndex:
@@ -169,10 +185,47 @@ def _stage_retrieval_logs(
             )
 
 
+def _schedule_faithfulness_check(
+    background_tasks: BackgroundTasks,
+    request: Request,
+    deps: AgentDeps,
+    settings: Settings,
+    user: User,
+    conversation: Conversation,
+    assistant_message: Message,
+    reply_text: str,
+) -> None:
+    """Queue the post-response grounding check for a turn that consulted the FAQ.
+
+    Scheduled, never awaited: the check costs two model round trips the user would
+    otherwise wait on for a number they never see. Scheduling itself is wrapped because
+    building the judge model can fail (no API key, misconfigured provider), and an
+    observability failure must never cost the user their answer.
+    """
+    try:
+        background_tasks.add_task(
+            run_faithfulness_check,
+            request.app.state.engine,
+            settings,
+            get_judge_model(request),
+            message_id=assistant_message.id,
+            conversation_id=conversation.id,
+            user_id=user.id,
+            reply_text=reply_text,
+            context=collect_context(deps.rag, deps.retrieval_sink),
+        )
+    except Exception:
+        logger.exception(
+            "faithfulness_check_not_scheduled",
+            extra={"conversation_id": conversation.id, "user_id": user.id},
+        )
+
+
 @router.post("/messages", response_model=ChatMessageResponse)
 async def post_message(
     payload: ChatMessageRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     user: CurrentUser,
     db: DbSession,
     settings: SettingsDep,
@@ -245,6 +298,22 @@ async def post_message(
     ).decode()
     db.add(conversation)
     db.commit()
+
+    # After the commit, so the assistant message the check references already exists by
+    # the time the background task opens its own session. A turn that never called
+    # `search_faq` gets no row at all — faithfulness to retrieved context is undefined
+    # when nothing was retrieved.
+    if settings.faithfulness_check_enabled and deps.retrieval_sink:
+        _schedule_faithfulness_check(
+            background_tasks,
+            request,
+            deps,
+            settings,
+            user,
+            conversation,
+            assistant_message,
+            result.output,
+        )
 
     logger.info(
         "chat_turn_completed",
