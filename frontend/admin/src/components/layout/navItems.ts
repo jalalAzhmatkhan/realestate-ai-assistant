@@ -19,4 +19,5 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { to: '/properties', label: 'Properties', icon: '🏠', allow: STAFF },
   { to: '/bookings', label: 'Bookings', icon: '📅', allow: STAFF },
   { to: '/users', label: 'Users', icon: '👤', allow: ['admin'] },
+  { to: '/chat-inspector', label: 'Chat Inspector', icon: '🔍', allow: ['admin'] },
 ]

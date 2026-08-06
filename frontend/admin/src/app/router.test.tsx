@@ -57,6 +57,26 @@ describe('router', () => {
     expect(memoryRouter.state.location.pathname).toBe('/')
   })
 
+  it('renders /chat-inspector for an admin', async () => {
+    renderApp({ user: buildUser('admin'), initialEntries: ['/chat-inspector'] })
+
+    expect(await screen.findByRole('heading', { name: 'Chat Inspector' })).toBeVisible()
+  })
+
+  it('bounces an agent off /chat-inspector to the dashboard with a reason', async () => {
+    // This dashboard-only restriction sits on top of an endpoint every role may call
+    // (`POST /chat/messages` takes any authenticated user) — the gate here is UX, not
+    // the reason the backend would reject an agent's request.
+    const { router: memoryRouter } = renderApp({
+      user: buildUser('agent'),
+      initialEntries: ['/chat-inspector'],
+    })
+
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible()
+    expect(screen.getByRole('alert')).toHaveTextContent('You do not have access to /chat-inspector.')
+    expect(memoryRouter.state.location.pathname).toBe('/')
+  })
+
   it('shows no denial notice on a normal visit to the dashboard', async () => {
     renderApp({ user: buildUser('agent') })
 
