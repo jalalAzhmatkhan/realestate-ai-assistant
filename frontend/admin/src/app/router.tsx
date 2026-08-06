@@ -5,9 +5,11 @@ import RoleGate from '@/components/ui/RoleGate'
 import BookingDetailPage from '@/routes/BookingDetailPage'
 import BookingsPage from '@/routes/BookingsPage'
 import ChatInspectorPage from '@/routes/ChatInspectorPage'
+import EvalRunDetailPage from '@/routes/EvalRunDetailPage'
 import HomePage from '@/routes/HomePage'
 import LoginPage from '@/routes/LoginPage'
 import NotFoundPage from '@/routes/NotFoundPage'
+import ObservabilityPage from '@/routes/ObservabilityPage'
 import PropertiesPage from '@/routes/PropertiesPage'
 import PropertyCreatePage from '@/routes/PropertyCreatePage'
 import PropertyDetailPage from '@/routes/PropertyDetailPage'
@@ -17,6 +19,7 @@ import type { NotAuthorizedState } from '@/lib/auth/routeState'
 
 const USERS_PATH = '/users'
 const CHAT_INSPECTOR_PATH = '/chat-inspector'
+const OBSERVABILITY_PATH = '/observability'
 
 /**
  * `/login` sits outside the shell; everything else renders inside it. The `<RoleGate>`
@@ -69,6 +72,44 @@ export const routes: RouteObject[] = [
             }
           >
             <ChatInspectorPage />
+          </RoleGate>
+        ),
+      },
+      {
+        path: OBSERVABILITY_PATH,
+        element: (
+          <RoleGate
+            allow={['admin']}
+            fallback={
+              <Navigate
+                to="/"
+                replace
+                state={{ notAuthorized: OBSERVABILITY_PATH } satisfies NotAuthorizedState}
+              />
+            }
+          >
+            <ObservabilityPage />
+          </RoleGate>
+        ),
+      },
+      // Nested under the same `<RoleGate>` rather than sharing one at a parent route:
+      // every other guarded screen in this router (`/users`, `/chat-inspector`) gates a
+      // single leaf, so a run's drill-in gets the same explicit gate instead of being the
+      // one guarded-by-ancestor exception.
+      {
+        path: `${OBSERVABILITY_PATH}/eval-runs/:runId`,
+        element: (
+          <RoleGate
+            allow={['admin']}
+            fallback={
+              <Navigate
+                to="/"
+                replace
+                state={{ notAuthorized: OBSERVABILITY_PATH } satisfies NotAuthorizedState}
+              />
+            }
+          >
+            <EvalRunDetailPage />
           </RoleGate>
         ),
       },
