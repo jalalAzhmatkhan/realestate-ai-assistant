@@ -24,14 +24,14 @@ describe('router', () => {
 
     await router.navigate(LOGIN_PATH, { replace: true })
 
-    expect(await screen.findByText('Sign-in form lands in F3.')).toBeVisible()
+    expect(await screen.findByRole('button', { name: 'Log in' })).toBeVisible()
     expect(window.location.pathname).toBe(LOGIN_PATH)
   })
 
   it('renders /login outside the shell, so a dead session is not a prerequisite for signing in', () => {
     renderApp({ initialEntries: [LOGIN_PATH] })
 
-    expect(screen.getByText('Sign-in form lands in F3.')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Log in' })).toBeVisible()
     expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument()
   })
 

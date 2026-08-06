@@ -40,6 +40,7 @@ export function renderApp(options: { user?: CurrentUser; initialEntries?: string
 
   return {
     router,
+    client,
     ...render(
       <QueryClientProvider client={client}>
         <RouterProvider router={router} />
