@@ -27,14 +27,58 @@ internal module boundaries are designed to map 1:1 onto the distributed target a
 
 ## Setup
 
-Requirements: Python >= 3.11, [`uv`](https://docs.astral.sh/uv/).
+### Docker Compose (recommended — the full stack: Postgres, Redis, backend, frontend, nginx)
+
+Requirements: Docker with Compose v2. On Windows, this means **Docker running inside WSL2** — run every
+`docker`/`docker compose` command from a WSL shell (`wsl -e bash -lc "..."`), never bare on Windows/
+PowerShell and never via Docker Desktop's own engine, to keep a single consistent Docker context.
+
+```bash
+cd realestate-ai-assistant
+cp backend/.env.example backend/.env
+cp frontend/admin/.env.example frontend/admin/.env
+```
+
+Then edit `backend/.env` and set at minimum:
+
+- `JWT_SECRET_KEY` — generate one with `openssl rand -hex 32`; the `.env.example` placeholder
+  (`dev-only-change-me`) only passes the length check in `APP_ENV=dev`.
+- `LLM_PROVIDER` (`openai` | `anthropic` | `gemini`) and the matching `*_API_KEY` /
+  `*_MODEL` pair for whichever provider you chose (e.g. `LLM_PROVIDER=openai` needs
+  `OPENAI_API_KEY` filled in — the app boots and serves the REST/auth surface with no key set,
+  but chat requests will fail until one is).
+- `EMBEDDING_PROVIDER` (`openai` | `gemini` | `local`) and its matching `*_EMBEDDING_MODEL` — this is
+  **independent** of `LLM_PROVIDER` (see Design Decisions below); `local` needs no API key at all and is
+  the default.
+
+`frontend/admin/.env` only matters for non-Docker `npm run dev` — the containerized frontend build gets
+`VITE_API_BASE_URL` baked in as a build arg (`docker-compose.yml`'s `frontend` service, resolved through
+the `nginx` reverse proxy), so there is nothing to edit there for the Docker Compose path.
+
+```bash
+docker compose --env-file backend/.env build
+docker compose --env-file backend/.env up -d
+```
+
+This builds and starts `postgres` (`pgvector/pgvector:pg16`), `redis`, `backend` (runs
+`alembic upgrade head` automatically on container start, then the idempotent FAQ reindex), the one-shot
+`frontend` build, and `nginx`, which serves the admin SPA and proxies `/api/v1/*` to `backend` — visit
+`http://localhost:5173`. `docker compose --env-file backend/.env logs -f backend` to follow backend
+startup; `docker compose --env-file backend/.env ps` to check health.
+
+### Manual (backend only, non-Docker)
+
+Requirements: Python >= 3.11, [`uv`](https://docs.astral.sh/uv/), and a reachable Postgres with the
+`pgvector` extension available (SQLite is not a supported runtime for the FAQ index — see the
+`DATABASE_URL` row below).
 
 ```bash
 cd realestate-ai-assistant/backend
 uv sync                      # installs dependencies from pyproject.toml/uv.lock
 cp .env.example .env         # then fill in the values described below
 uv run alembic upgrade head  # applies schema migrations — required before first boot, see below
-uv run uvicorn app.main:app --reload   # once app/main.py exists; current main.py is a placeholder
+uv run python -m app.rag.reindex   # populates faq_embeddings — or rely on RAG_INDEX_ON_STARTUP=true
+uv run uvicorn app.main:app --reload
 ```
 
 The Python project root is `backend/` — see the Module Layout note below for the state of that move.
@@ -101,13 +145,14 @@ at startup instead of inserting into tables that were never created.
 | `MAX_PAGE_SIZE` | no | `100` | Hard ceiling for `page_size`; larger values are rejected (422), not silently clamped |
 | `CORS_ALLOWED_ORIGINS` | no | `*` (dev only) | Comma-separated origins; must be an explicit origin list (not `*`) for the cookie-authenticated admin SPA |
 
-[^db-url-transitional]: As of B31 (pgvector infrastructure — this task), `Settings.database_url`'s
-  code default has **not** been flipped yet and is still `sqlite:///./app.db`; only `docker-compose.yml`'s
-  `postgres` service image, the `pgvector` dependency, and `RAG_INDEX_ON_STARTUP` land in this task. The
-  row above documents the target state once B32 (`faq_embeddings` schema + Alembic migration, which is
-  what actually makes `CREATE EXTENSION vector` run and makes SQLite fail `alembic upgrade head`) lands —
-  see `Documentation/audits/2026-08-06-pgvector-migration-contract.md`. B31–B33 are a hard gate sequenced
-  together, so this is transitional only for the span of that sequence.
+[^db-url-transitional]: B31–B33 (pgvector infrastructure through the activated retrieval baseline) are
+  merged. `Settings.database_url`'s **code default** deliberately remains `sqlite:///./app.db` even so —
+  `docker-compose.yml`'s `backend` service overrides it to the Postgres DSN shown above via environment
+  interpolation, so the containerized path always targets Postgres; a bare `uv run uvicorn` with no
+  `DATABASE_URL` set still boots against SQLite for everything except the FAQ index (`faq_embeddings` is
+  Postgres-only — its migration and `create_tables()` are both no-ops on any other dialect), which then
+  raises loudly rather than silently serving wrong results. Set `DATABASE_URL` to a real Postgres DSN in
+  `backend/.env` for non-Docker local dev if you want FAQ search to work outside Compose.
 
 `.env.example` (to be created by the Backend Engineer alongside implementation, at `backend/.env.example`)
 should enumerate all of the above with safe dev defaults and empty API key placeholders.
