@@ -1,11 +1,12 @@
 """``search_faq`` — RAG lookup over the knowledge base. No writes, no identity scoping."""
 
 import logging
+import time
 
 from pydantic import BaseModel
 from pydantic_ai import RunContext
 
-from app.agent.deps import AgentDeps
+from app.agent.deps import AgentDeps, RetrievalRecord
 from app.agent.tools.errors import UpstreamToolError
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ async def search_faq(
     # model asking for 50 entries cannot flood its own context with weak matches.
     effective_top_k = max(1, min(top_k, settings.rag_top_k))
 
+    started = time.perf_counter()
     try:
         hits = await ctx.deps.rag.search(
             query, top_k=effective_top_k, min_score=settings.rag_min_score
@@ -78,6 +80,32 @@ async def search_faq(
                 "connect the user with a human agent."
             ),
         ) from None
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    # A zero-result search is logged too, not skipped: an empty-results row is the
+    # single highest-signal diagnostic this instrumentation exists to surface.
+    ctx.deps.retrieval_sink.append(
+        RetrievalRecord(
+            query_text=query,
+            requested_top_k=top_k,
+            effective_top_k=effective_top_k,
+            min_score=settings.rag_min_score,
+            results=[
+                {
+                    "rank": rank,
+                    "faq_id": hit.entry.id,
+                    "question": hit.entry.question,
+                    "category": hit.entry.category,
+                    "score": round(hit.score, 4),
+                }
+                for rank, hit in enumerate(hits, start=1)
+            ],
+            result_count=len(hits),
+            top_score=round(hits[0].score, 4) if hits else None,
+            embedding_model=ctx.deps.rag.embedding_model_name,
+            latency_ms=latency_ms,
+        )
+    )
 
     logger.info(
         "tool_call",

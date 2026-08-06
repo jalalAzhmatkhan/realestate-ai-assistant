@@ -28,7 +28,7 @@ from app.agent.providers import build_llm_model
 from app.api.deps import CurrentUser, DbSession, NotifierDep, SettingsDep
 from app.core.config import Settings
 from app.core.exceptions import DomainError
-from app.models import Conversation, Message, User
+from app.models import Conversation, Message, RetrievalLog, User
 from app.rag.embeddings import build_embedding_model
 from app.rag.index import FaqIndex, build_faq_index
 from app.schemas.chat import ChatMessageRequest, ChatMessageResponse, ToolCallRecord
@@ -129,6 +129,46 @@ def _load_history(conversation: Conversation) -> list[ModelMessage]:
         return []
 
 
+def _stage_retrieval_logs(
+    db: Session,
+    deps: AgentDeps,
+    user: User,
+    conversation: Conversation,
+    user_message: Message,
+    assistant_message: Message,
+) -> None:
+    """Turn this run's accumulated ``search_faq`` calls into rows on the turn's session.
+
+    Staged, not committed: they land in the same transaction as the messages they
+    reference. A record that cannot be turned into a row is dropped and logged —
+    observability must never be able to fail a chat turn.
+    """
+    for record in deps.retrieval_sink:
+        try:
+            db.add(
+                RetrievalLog(
+                    conversation_id=conversation.id,
+                    message_id=assistant_message.id,
+                    user_message_id=user_message.id,
+                    user_id=user.id,
+                    query_text=record.query_text,
+                    requested_top_k=record.requested_top_k,
+                    effective_top_k=record.effective_top_k,
+                    min_score=record.min_score,
+                    results=record.results,
+                    result_count=record.result_count,
+                    top_score=record.top_score,
+                    embedding_model=record.embedding_model,
+                    latency_ms=record.latency_ms,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "retrieval_log_row_dropped",
+                extra={"conversation_id": conversation.id, "user_id": user.id},
+            )
+
+
 @router.post("/messages", response_model=ChatMessageResponse)
 async def post_message(
     payload: ChatMessageRequest,
@@ -182,16 +222,24 @@ async def post_message(
     ]
 
     created_at = datetime.now(timezone.utc)
-    db.add(Message(conversation_id=conversation.id, role="user", content=payload.message))
-    db.add(
-        Message(
-            conversation_id=conversation.id,
-            role="assistant",
-            content=result.output,
-            tool_calls=[call.model_dump() for call in tool_calls] or None,
-            created_at=created_at,
-        )
+    user_message = Message(
+        conversation_id=conversation.id, role="user", content=payload.message
     )
+    assistant_message = Message(
+        conversation_id=conversation.id,
+        role="assistant",
+        content=result.output,
+        tool_calls=[call.model_dump() for call in tool_calls] or None,
+        created_at=created_at,
+    )
+    db.add(user_message)
+    db.add(assistant_message)
+
+    if settings.retrieval_log_enabled:
+        _stage_retrieval_logs(
+            db, deps, user, conversation, user_message, assistant_message
+        )
+
     conversation.history_json = ModelMessagesTypeAdapter.dump_json(
         result.all_messages()
     ).decode()

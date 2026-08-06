@@ -103,6 +103,10 @@ class FaqIndex:
     def is_built(self) -> bool:
         return self._vectors is not None
 
+    @property
+    def embedding_model_name(self) -> str:
+        return self._embedding_model.model_name
+
     async def ensure_built(self) -> None:
         if self._vectors is not None or not self._entries:
             return
