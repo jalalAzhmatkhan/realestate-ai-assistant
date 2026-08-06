@@ -36,6 +36,7 @@ from app.property.queries import (
     PropertyFilters,
     apply_property_filters,
     find_editable_property,
+    find_visible_property,
     scoped_property_query,
 )
 from app.schemas.property import PropertyDetail, PropertySummary, PropertyWriteRequest
@@ -148,6 +149,27 @@ def list_properties(
         extra={"user_id": user.id, "role": user.role, "total": page.total},
     )
     return page
+
+
+@router.get("/{property_id}", response_model=PropertyDetail)
+def get_property(property_id: str, user: CurrentUser, db: DbSession) -> PropertyDetail:
+    """One listing in full, scoped to what the caller may *see*.
+
+    Deliberately the wider ``find_visible_property`` rather than the
+    ``find_editable_property`` the writes resolve through: an agent may open the detail
+    of any listing their list screen already shows them, while Save and Deactivate stay
+    restricted to their own. ``PropertySummary`` cannot stand in for this response — it
+    omits five fields ``PropertyWriteRequest`` requires as a full replacement.
+    """
+    prop = find_visible_property(db, user, property_id)
+    if prop is None:
+        raise PropertyNotFoundError()
+
+    logger.info(
+        "property_read",
+        extra={"user_id": user.id, "role": user.role, "property_id": prop.id},
+    )
+    return PropertyDetail.from_property(prop)
 
 
 @router.post("", response_model=PropertyDetail, status_code=201)

@@ -231,6 +231,64 @@ def test_a_user_response_carries_exactly_the_contracted_fields(client):
     }
 
 
+# ------------------------------------------------------ single-item read: GET /{id}
+
+
+@pytest.mark.parametrize("user_id", ["u-admin-1", "u-agent-1", "u-client-1"])
+def test_an_admin_may_read_any_user_by_id(client, user_id):
+    response = client.get(f"{USERS}/{user_id}", headers=bearer(client, ADMIN_EMAIL))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == user_id
+    assert_no_credential_material(response)
+
+
+@pytest.mark.parametrize("email", [AGENT_EMAIL, CLIENT_EMAIL])
+@pytest.mark.parametrize("user_id", ["u-client-2", "u-nobody"])
+def test_a_non_admin_reading_a_user_gets_403_not_404(client, email, user_id):
+    """The one endpoint of the three single-item reads with a ``403`` path: a non-admin
+    may not touch this router at all, so the answer must not depend on whether the id
+    exists — including for a nonexistent one, which must not leak that it is unknown."""
+    response = client.get(f"{USERS}/{user_id}", headers=bearer(client, email))
+
+    assert response.status_code == 403
+    assert code_of(response) == "forbidden"
+
+
+def test_an_agent_cannot_even_read_their_own_record(client):
+    """No self-service carve-out on the read either — the role gate is the whole
+    authorization for this router."""
+    response = client.get(f"{USERS}/u-agent-1", headers=bearer(client, AGENT_EMAIL))
+
+    assert response.status_code == 403
+
+
+def test_an_admin_reading_an_unknown_user_is_a_404(client):
+    response = client.get(f"{USERS}/u-nobody", headers=bearer(client, ADMIN_EMAIL))
+
+    assert response.status_code == 404
+    assert code_of(response) == "user_not_found"
+
+
+def test_the_single_read_returns_the_same_shape_as_a_list_row(client):
+    """Users have no summary/detail split — the list item type is already the complete
+    record minus ``hashed_password``."""
+    headers = bearer(client, ADMIN_EMAIL)
+    row = next(
+        item
+        for item in client.get(USERS, headers=headers).json()["results"]
+        if item["id"] == "u-client-1"
+    )
+
+    detail = client.get(f"{USERS}/u-client-1", headers=headers).json()
+
+    assert detail == row
+
+
+def test_reading_one_user_requires_authentication(client):
+    assert client.get(f"{USERS}/u-client-1").status_code == 401
+
+
 # ------------------------------------------------------------------------ filtering
 
 

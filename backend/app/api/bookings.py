@@ -148,6 +148,20 @@ def list_bookings(
     return page
 
 
+@router.get("/{booking_id}", response_model=BookingResponse)
+def get_booking(booking_id: str, user: CurrentUser, db: DbSession) -> BookingResponse:
+    """One booking, in the same shape a list row carries — bookings have no
+    summary/detail split, the list item type is already the complete record.
+
+    Resolved through the scope that also governs cancel and reschedule, so a booking
+    belonging to somebody else is ``404``, never ``403``.
+    """
+    booking = _resolve_booking(db, user, booking_id)
+
+    _log("booking_read", user, booking)
+    return BookingResponse.from_booking(booking)
+
+
 @router.post("/{booking_id}/cancel", response_model=BookingResponse)
 def cancel(
     booking_id: str, user: CurrentUser, db: DbSession, notifier: NotifierDep

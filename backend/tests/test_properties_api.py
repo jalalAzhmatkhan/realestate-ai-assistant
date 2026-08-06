@@ -307,6 +307,99 @@ def test_sorting_is_applied_in_the_requested_direction(client):
     assert descending == sorted(descending, reverse=True)
 
 
+# ------------------------------------------------------ single-item read: GET /{id}
+
+
+@pytest.mark.parametrize(
+    ("email", "property_id"),
+    [
+        (CLIENT_EMAIL, ACTIVE_OF_AGENT1),
+        (AGENT1_EMAIL, ACTIVE_OF_AGENT1),
+        (AGENT1_EMAIL, UNDER_OFFER_OF_AGENT1),
+        (AGENT3_EMAIL, DRAFT_OF_AGENT3),
+        (ADMIN_EMAIL, DRAFT_OF_AGENT3),
+        (ADMIN_EMAIL, SOLD_OF_AGENT2),
+    ],
+)
+def test_an_in_scope_listing_reads_back_by_id(client, email, property_id):
+    """The detail scope is the list scope, role by role — anything a caller's list screen
+    shows them must open."""
+    response = client.get(f"{PROPERTIES}/{property_id}", headers=bearer(client, email))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == property_id
+
+
+@pytest.mark.parametrize(
+    ("email", "property_id"),
+    [
+        (CLIENT_EMAIL, DRAFT_OF_AGENT3),
+        (CLIENT_EMAIL, SOLD_OF_AGENT2),
+        (CLIENT_EMAIL, "prop-does-not-exist"),
+        (AGENT1_EMAIL, DRAFT_OF_AGENT3),
+        (AGENT1_EMAIL, SOLD_OF_AGENT2),
+        (AGENT1_EMAIL, "prop-does-not-exist"),
+        (ADMIN_EMAIL, "prop-does-not-exist"),
+    ],
+)
+def test_an_invisible_or_nonexistent_listing_is_one_404_never_a_403(
+    client, email, property_id
+):
+    """A ``403`` here would confirm a ``draft``/``sold`` listing exists — something the
+    list endpoint never reveals, which would make this a better enumeration oracle than
+    anything else shipped."""
+    response = client.get(f"{PROPERTIES}/{property_id}", headers=bearer(client, email))
+
+    assert response.status_code == 404
+    assert code_of(response) == "property_not_found"
+
+
+def test_an_agent_reads_another_agents_active_listing_but_still_cannot_write_it(client):
+    """The read/write scope asymmetry, in one test. Narrowing the GET to the editable
+    scope for symmetry with ``PUT`` would dead-end most rows of this agent's own list
+    screen on a 404."""
+    headers = bearer(client, AGENT1_EMAIL)
+
+    read = client.get(f"{PROPERTIES}/{ACTIVE_OF_AGENT3}", headers=headers)
+    write = client.put(
+        f"{PROPERTIES}/{ACTIVE_OF_AGENT3}", json=property_payload(), headers=headers
+    )
+
+    assert read.status_code == 200, read.text
+    assert read.json()["agent_id"] == AGENT3
+    assert (write.status_code, code_of(write)) == (404, "property_not_found")
+
+
+def test_the_detail_response_carries_the_fields_a_list_row_omits(client):
+    """Why the endpoint exists at all: ``PUT`` is a full replacement, and an edit form
+    hydrated from a cached list row would blank ``description``/``amenities`` and have no
+    coordinates to submit."""
+    headers = bearer(client, ADMIN_EMAIL)
+    detail = client.get(f"{PROPERTIES}/{ACTIVE_OF_AGENT1}", headers=headers).json()
+    summary = next(
+        item
+        for item in client.get(PROPERTIES, headers=headers).json()["results"]
+        if item["id"] == ACTIVE_OF_AGENT1
+    )
+
+    detail_only = {"latitude", "longitude", "amenities", "description", "listed_date"}
+    assert detail_only <= set(detail)
+    assert detail_only.isdisjoint(summary)
+
+
+def test_reading_one_listing_requires_authentication(client):
+    assert client.get(f"{PROPERTIES}/{ACTIVE_OF_AGENT1}").status_code == 401
+
+
+def test_the_item_route_does_not_shadow_the_list_route(client):
+    """``GET ""`` and ``GET "/{id}"`` coexist; the list must still page rather than
+    resolve as an id."""
+    response = client.get(PROPERTIES, headers=bearer(client, ADMIN_EMAIL))
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 15
+
+
 # ------------------------------------------------------------------- write role gate
 
 
