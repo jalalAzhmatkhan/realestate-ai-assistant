@@ -25,8 +25,15 @@ dependencies = [
     # LLM_PROVIDER accepts, and `google` (not the deprecated `gemini`) is the current
     # extra backing GoogleModel/GoogleEmbeddingModel.
     "pydantic-ai-slim[anthropic,google,openai]>=1.0",
-    # Backs app/rag/index.py's flat cosine index.
+    # Backs app/rag/index.py's flat cosine index today; still used for embedding-array
+    # handling at reindex time once app/rag moves to pgvector (B32/B33) even though the
+    # cosine search itself moves into SQL.
     "numpy>=2.4.6",
+    # SQLAlchemy `Vector` column type for the pgvector-backed faq_embeddings table
+    # (B32). Pure-Python client bindings; the actual `vector` extension lives in
+    # Postgres (pgvector/pgvector:pg16 in docker-compose.yml) and is unrelated to this
+    # package on SQLite, which never creates that table or imports this column type.
+    "pgvector>=0.3",
     # EMBEDDING_PROVIDER=local, the zero-API-key default, so FAQ search works with no
     # credentials at all. Heavy (pulls torch) but it is the only way the documented
     # "runs fully offline out of the box" claim is true; deployments that set
