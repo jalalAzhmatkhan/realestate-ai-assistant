@@ -408,15 +408,18 @@ below.
 | Endpoint | Method | Roles | Purpose |
 |---|---|---|---|
 | `/api/v1/auth/login` | POST | any | Exchange email/password for a session. `client_type=api` (default) returns a Bearer JWT in the body; `client_type=browser` sets an httpOnly session cookie and returns a CSRF token instead |
-| `/api/v1/auth/logout` | POST | admin, agent, client | Clears the session cookie (browser sessions only; Bearer tokens are stateless and simply expire) |
+| `/api/v1/auth/logout` | POST | admin, agent, client | Revokes the presented token immediately via a Redis-backed denylist and clears the session cookie (browser sessions only) |
 | `/api/v1/auth/me` | GET | admin, agent, client | Returns the current user's id/name/email/role (+ a fresh CSRF token for cookie sessions) so the SPA can render role-aware UI without decoding the httpOnly cookie |
 | `/api/v1/chat/messages` | POST | admin, agent, client | Send a message to the agent; entrypoint to the tool-calling loop |
 | `/api/v1/properties` | GET | admin, agent, client | List/search properties (paginated + filtered, RBAC-scoped, see below) |
+| `/api/v1/properties/{id}` | GET | admin, agent, client | One listing in full (`PropertyDetail`), scoped to what the caller may *see*, not what they may edit |
 | `/api/v1/properties` | POST/PUT/DELETE | admin, agent (own) | Manage listings |
 | `/api/v1/bookings` | GET | admin, agent (own), client (own) | List bookings (paginated + filtered, RBAC-scoped) |
+| `/api/v1/bookings/{id}` | GET | admin, agent (own), client (own) | One booking |
 | `/api/v1/bookings/{id}/cancel` | POST | admin, agent (own), client (own) | Cancel a booking |
 | `/api/v1/bookings/{id}/reschedule` | POST | admin, agent (own), client (own) | Move a booking to a different slot, keeping the same `booking_id` |
 | `/api/v1/users` | GET/POST/PATCH | admin | User management (list is paginated + filtered) |
+| `/api/v1/users/{id}` | GET | admin | One user |
 
 The admin dashboard (`frontend/admin/`) is a client of this same API — it has no dedicated backend
 routes of its own. See `Documentation/system-design/frontend-admin-dashboard.md` §7 for the full
@@ -811,6 +814,58 @@ RBAC: `admin` only — `agent` and `client` receive `403 {"code": "forbidden"}` 
 > to `backend/seed_data/users.json`. `login` rejects `status="disabled"` with `403 account_disabled`,
 > and `/auth/me` returns `401 session_revoked` for a user disabled mid-session. `status` is also load
 > bearing for `escalate_to_human`'s listing-agent assignment, which skips disabled agents.
+
+### Single-item reads: `GET /{id}`
+
+Each list endpoint has a matching single-item read, backing the UI/UX doc's detail screens (§5.3
+`/properties/:id`, §5.5 `/bookings/:id`). Specified in
+`Documentation/audits/2026-08-06-single-item-get-endpoints.md`.
+
+| Endpoint | Returns | Roles | Resolver |
+|---|---|---|---|
+| `GET /api/v1/properties/{id}` | `PropertyDetail` | `admin`, `agent`, `client` | `find_visible_property` |
+| `GET /api/v1/bookings/{id}` | booking object (same shape as the list item) | `admin`, `agent`, `client` | `scoped_booking_query` |
+| `GET /api/v1/users/{id}` | user object (same shape as the list item) | `admin` only | `db.get` — users have no per-record scope |
+
+**Response shapes reuse the existing models; there is no `BookingDetail` or `UserDetail`.** Bookings
+and users have no summary/detail split — their list item type is already the complete record, so the
+single-GET returns exactly what the corresponding list row contains. Properties *does* have a split,
+and the single-GET returns the **detail** shape, matching `POST`/`PUT`/`DELETE`.
+
+> **`PropertySummary` is not a substitute for `PropertyDetail`.** It omits `latitude`, `longitude`,
+> `amenities`, `description`, and `listed_date` — all of which `PUT /api/v1/properties/{id}` accepts as
+> a *full replacement*. An edit form hydrated from a cached list row would blank `description` and
+> `amenities` on save and would have no coordinates to submit at all. The detail screen must fetch
+> `GET /api/v1/properties/{id}`, not reuse the row it was clicked from.
+
+**Read scope is the *visibility* scope, not the *editable* scope.** `GET /api/v1/properties/{id}`
+resolves through the same rule as `GET /api/v1/properties`: a `client` sees `active` listings only, an
+`agent` sees every `active` listing plus their own in any status, an `admin` is unrestricted. So an
+agent may open the detail screen for another agent's `active` listing read-only — the same rows their
+list screen already shows them — while `PUT`/`DELETE` continue to resolve through the narrower
+`editable_property_query` and answer `404` for a listing they do not own. The SPA renders
+Save/Deactivate when `user.role === "admin" || property.agent_id === user.id`; there is no `can_edit`
+field, because it is derivable and the backend re-enforces on the write regardless.
+
+Bookings have no such split: the scope that governs `GET /api/v1/bookings/{id}` is the same one that
+governs cancel and reschedule (`admin` any; `agent` where `agent_id == user.id`; `client` where
+`client_id == user.id`).
+
+**Failure modes:**
+
+| Condition | Status | `code` |
+|---|---|---|
+| Property id unknown, or outside the caller's visibility scope | `404` | `property_not_found` |
+| Booking id unknown, or outside the caller's scope | `404` | `booking_not_found` |
+| `GET /users/{id}` called by an `agent` or `client` | `403` | `forbidden` |
+| `GET /users/{id}` by an `admin`, id unknown | `404` | `user_not_found` |
+
+Same posture as everywhere else: an out-of-scope *individual record* is indistinguishable from a
+nonexistent one, so ids cannot be enumerated by probing for a permission error. `403` is reserved for
+role-level denial of an endpoint the role may not touch at all — which is why `/users/{id}` is the only
+one of the three with a `403` path, exactly as `GET /users` already is. A `403` on
+`GET /api/v1/properties/{id}` would confirm that a `draft` or `sold` listing exists, which no other
+endpoint reveals. `GET` is CSRF-exempt, so no `csrf_token_invalid` applies.
 
 ### Tool contracts (illustrative — Pydantic AI tool signatures)
 
