@@ -22,6 +22,7 @@ production reader. There is exactly one retrieval code path — no NumPy fallbac
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -61,6 +62,16 @@ class FaqEntry:
 class FaqHit:
     entry: FaqEntry
     score: float
+
+
+@dataclass(frozen=True)
+class IndexStats:
+    """What decision 3(f) needs an eval run to record: the index state that produced
+    its numbers, so a metric drop caused by a forgotten reindex is distinguishable from
+    one caused by a worse embedding model."""
+
+    row_count: int
+    indexed_at: datetime | None
 
 
 def load_faq_entries(seed_data_dir: str | Path) -> list[FaqEntry]:
@@ -119,6 +130,8 @@ class FaqRetriever(Protocol):
 
     def get(self, faq_id: str) -> FaqEntry | None: ...
 
+    def index_stats(self) -> IndexStats: ...
+
 
 def _to_pgvector_literal(values) -> str:
     """``[0.1,-0.2,...]`` — pgvector's text input format for a ``vector`` value.
@@ -146,6 +159,23 @@ class FaqIndex:
     @property
     def embedding_model_name(self) -> str:
         return self._embedding_model.model_name
+
+    def index_stats(self) -> IndexStats:
+        """Row count and newest ``indexed_at`` for the current ``embedding_model`` —
+        what a retrieval eval run records per decision 3(f), so a metric drop caused by
+        a forgotten reindex is distinguishable from one caused by a worse embedding
+        model. A zero ``row_count`` is what ``app/observability/eval.py`` checks before
+        starting a run (the same "empty index" gap :meth:`search` raises for)."""
+        row = self._db.execute(
+            text(
+                f"""
+                SELECT COUNT(*) AS row_count, MAX(indexed_at) AS indexed_at
+                FROM {FAQ_EMBEDDINGS_TABLE}
+                WHERE embedding_model = :embedding_model
+                """
+            ).bindparams(embedding_model=self.embedding_model_name)
+        ).one()
+        return IndexStats(row_count=int(row.row_count), indexed_at=row.indexed_at)
 
     def get(self, faq_id: str) -> FaqEntry | None:
         """Entry text by id, for callers holding only what a search returned.

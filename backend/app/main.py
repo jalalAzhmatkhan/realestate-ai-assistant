@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent.deps import AgentDeps
-from app.api import auth, bookings, chat, properties, users
+from app.api import auth, bookings, chat, observability, properties, users
 from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
@@ -130,6 +130,7 @@ def create_app(
     app.include_router(properties.router, prefix=API_V1_PREFIX)
     app.include_router(bookings.router, prefix=API_V1_PREFIX)
     app.include_router(users.router, prefix=API_V1_PREFIX)
+    app.include_router(observability.router, prefix=API_V1_PREFIX)
 
     # Operational endpoint for container/orchestrator health probes — deliberately
     # outside /api/v1 and outside the README's API surface contract.

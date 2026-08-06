@@ -17,7 +17,7 @@ import asyncio
 
 import numpy as np
 
-from app.rag.index import FaqEntry, FaqHit
+from app.rag.index import FaqEntry, FaqHit, IndexStats
 
 
 def _l2_normalize(matrix: np.ndarray) -> np.ndarray:
@@ -53,6 +53,13 @@ class InMemoryFaqIndex:
 
     def get(self, faq_id: str) -> FaqEntry | None:
         return self._by_id.get(faq_id)
+
+    def index_stats(self) -> IndexStats:
+        """No real ``indexed_at`` to report — this double has no database. ``None`` is
+        the honest answer, not a fabricated timestamp; tests asserting eval-run
+        ``index_indexed_at`` behavior use the real ``FaqIndex`` against Postgres
+        instead (``tests/test_rag_baseline.py``)."""
+        return IndexStats(row_count=len(self._entries), indexed_at=None)
 
     async def _ensure_built(self) -> None:
         if self._vectors is not None or not self._entries:

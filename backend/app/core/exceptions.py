@@ -242,6 +242,85 @@ class InvalidSortFieldError(DomainError):
         super().__init__(message, **extra)
 
 
+class EvalSetUnavailableError(DomainError):
+    code = "eval_set_unavailable"
+    status_code = 503
+
+    def __init__(
+        self, message: str = "The retrieval evaluation set is unavailable.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class FaqIndexUnavailableError(DomainError):
+    code = "faq_index_unavailable"
+    status_code = 503
+
+    def __init__(
+        self,
+        message: str = "The FAQ retrieval index has no rows for the configured embedding model.",
+        **extra: Any,
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class InvalidKValueError(DomainError):
+    code = "invalid_k_value"
+    status_code = 422
+
+    def __init__(
+        self, message: str = "k_values must be non-empty and each between 1 and 10.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class InvalidTierError(DomainError):
+    code = "invalid_tier"
+    status_code = 422
+
+    def __init__(self, message: str = "Unknown evaluation tier.", **extra: Any) -> None:
+        super().__init__(message, **extra)
+
+
+class EvalRunFailedError(DomainError):
+    """The run failed mid-flight. ``detail.run_id`` names the row already persisted
+    with ``status="failed"``, so the caller can look up what happened."""
+
+    code = "eval_run_failed"
+    status_code = 502
+
+    def __init__(self, message: str = "The evaluation run failed.", **extra: Any) -> None:
+        super().__init__(message, **extra)
+
+
+class EvalRunNotFoundError(ResourceNotFoundError):
+    code = "eval_run_not_found"
+
+    def __init__(
+        self, message: str = "That evaluation run could not be found.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class InvalidScoreRangeError(DomainError):
+    code = "invalid_score_range"
+    status_code = 422
+
+    def __init__(
+        self, message: str = "min_score must not exceed max_score.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
+class FaithfulnessCheckNotFoundError(ResourceNotFoundError):
+    code = "faithfulness_check_not_found"
+
+    def __init__(
+        self, message: str = "That faithfulness check could not be found.", **extra: Any
+    ) -> None:
+        super().__init__(message, **extra)
+
+
 async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
     logger.warning(
         "domain_error",
