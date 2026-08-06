@@ -42,25 +42,33 @@ export default function AppLayout() {
     )
   }
 
-  if (!isStaffRole(user.role) || user.status !== 'active') {
-    // Belt-and-braces with F3's login-time rejection: a `client` can hold a perfectly
-    // valid session from the chat surface, so arriving here is not an error — it is the
-    // wrong app (frontend design doc §2, §5). The `status` check is the same defense in
-    // depth: the backend already 401s a disabled user's `/auth/me` mid-session
-    // (README, `session_revoked`), so a non-active status reaching this render at all
-    // means something upstream didn't catch it — fail to the same safe screen rather
-    // than trust the role check alone (CLAUDE.md's "defense in depth" for RBAC).
+  // `client` is deliberately admitted to the shell, not just the top gate: this app is the
+  // product's only real chat surface today (the "separate chat consumer" the frontend
+  // design doc originally assumed was never built), and this product's actual purpose is
+  // clients chatting with the agent. A `client` still cannot reach any staff-only screen —
+  // the nav only ever shows them `/chat` (`components/layout/navItems.ts`), and every
+  // staff screen (`/properties`, `/bookings`, `/users`, `/chat-inspector`,
+  // `/observability`) carries its own `<RoleGate>` as the actual enforcement, same as
+  // before. The `status` check stays unconditional: an inactive account of any role still
+  // hits the screen below.
+  if ((!isStaffRole(user.role) && user.role !== 'client') || user.status !== 'active') {
+    // Belt-and-braces with F3's login-time rejection: an unrecognized role, or an active
+    // session behind a now-disabled account, is not a role this build knows how to seat —
+    // fail to a safe, logged-out-adjacent screen rather than trust the role check alone
+    // (CLAUDE.md's "defense in depth" for RBAC). The backend already 401s a disabled
+    // user's `/auth/me` mid-session (README, `session_revoked`), so a non-active status
+    // reaching this render at all means something upstream didn't catch it.
     //
     // This screen still needs its own way out: it renders before <TopBar>, so without a
-    // logout action here a client (or a disabled staff account) who successfully signs
-    // in lands with a live session and no visible way to end it short of typing /login.
+    // logout action here a stuck account lands with a live session and no visible way to
+    // end it short of typing /login.
     return (
       <main className="flex min-h-screen items-center justify-center p-6">
         <div className="max-w-sm space-y-3 text-center">
           <h1 className="text-xl font-semibold text-slate-900">Real Estate Admin</h1>
           <p className="text-sm text-slate-500">
-            This dashboard is for staff. If you are looking for properties or a viewing,
-            use the chat assistant.
+            Your account cannot access this app right now. If this seems wrong, contact an
+            administrator.
           </p>
           <WrongAppLogout />
         </div>

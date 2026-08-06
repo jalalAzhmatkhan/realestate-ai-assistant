@@ -46,10 +46,12 @@ function bodyOf(fetchMock: ReturnType<typeof mockApi>, method: string, pathname:
 
 describe('ObservabilityPage RBAC', () => {
   it('a client never reaches the page and fires no observability request', async () => {
+    // `client` reaches the shell now, but this page's own <RoleGate allow={['admin']}>
+    // still bounces them, same as an agent.
     const fetchMock = mockApi({ [LOG_LIST]: logsOf(), [RUNS_LIST]: runsOf() })
     renderApp({ user: buildUser('client'), initialEntries: ['/observability'] })
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'RAG Observability' })).not.toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()
   })
@@ -81,7 +83,7 @@ describe('ObservabilityPage RBAC', () => {
       initialEntries: ['/observability'],
     })
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
+    expect(await screen.findByText(/cannot access this app/)).toBeVisible()
   })
 })
 

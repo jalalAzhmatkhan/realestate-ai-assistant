@@ -50,10 +50,12 @@ function ok(overrides: Record<string, unknown> = {}) {
 
 describe('ChatInspectorPage RBAC', () => {
   it('a client never reaches the inspector and fires no chat request', async () => {
+    // `client` reaches the shell now (they have their own real Chat screen), but the
+    // inspector's own <RoleGate allow={['admin']}> still bounces them, same as an agent.
     const fetchMock = mockApi({ [SEND]: () => ok() })
     renderAs('client')
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'Chat Inspector' })).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Message')).not.toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()
@@ -86,7 +88,7 @@ describe('ChatInspectorPage RBAC', () => {
       initialEntries: [PATH],
     })
 
-    expect(await screen.findByText(/This dashboard is for staff/)).toBeVisible()
+    expect(await screen.findByText(/cannot access this app/)).toBeVisible()
   })
 })
 
