@@ -99,6 +99,11 @@ at startup instead of inserting into tables that were never created.
 | `DEFAULT_PAGE_SIZE` | no | `20` | Default `page_size` for list endpoints |
 | `MAX_PAGE_SIZE` | no | `100` | Hard ceiling for `page_size`; larger values are rejected (422), not silently clamped |
 | `CORS_ALLOWED_ORIGINS` | no | `*` (dev only) | Comma-separated origins; must be an explicit origin list (not `*`) for the cookie-authenticated admin SPA |
+| `RETRIEVAL_LOG_ENABLED` | no | `true` | Record every `search_faq` call to `retrieval_logs`. Off → no rows; the tool itself is unaffected |
+| `FAITHFULNESS_CHECK_ENABLED` | no | `true` | Run the post-response faithfulness check on FAQ-grounded turns. Off → no checks and **no rows** (empty state, never zeros) |
+| `FAITHFULNESS_MAX_CONCURRENT` | no | `4` | Ceiling on in-flight background faithfulness checks |
+| `FAITHFULNESS_MAX_CLAIMS` | no | `20` | Above this, claim decomposition is treated as failed rather than scored |
+| `EVAL_SET_MAX_CASES` | no | `60` | Ceiling on `backend/seed_data/faq_eval_set.json`; above it, an eval run returns `503 eval_set_unavailable` |
 
 `.env.example` (to be created by the Backend Engineer alongside implementation, at `backend/.env.example`)
 should enumerate all of the above with safe dev defaults and empty API key placeholders.
