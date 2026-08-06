@@ -1,44 +1,50 @@
 import { Link, useNavigate } from 'react-router'
 
 import StatusBadge from '@/components/ui/StatusBadge'
-import { readSort, toggleSort, type SortableField } from '@/lib/properties/filters'
-import { formatPrice } from '@/lib/properties/format'
-import { PROPERTY_TYPE_LABELS, type PropertySummary } from '@/lib/properties/types'
+import { readSort, toggleSort, type SortableField } from '@/lib/bookings/filters'
+import type { Booking } from '@/lib/bookings/types'
+import { formatSlotTime } from '@/lib/datetime'
+import CancelBookingButton from './CancelBookingButton'
 
-export interface PropertyTableProps {
-  properties: PropertySummary[]
+export interface BookingTableProps {
+  bookings: Booking[]
   sort: string
   onSortChange: (sort: string) => void
+  /** An `agent`'s rows all name the same agent — their own — so that column is dropped. */
+  showAgent: boolean
 }
-
-const COLUMNS: { key: string; label: string; sortBy?: SortableField; numeric?: boolean }[] = [
-  { key: 'title', label: 'Title', sortBy: 'title' },
-  { key: 'city', label: 'City', sortBy: 'city' },
-  { key: 'property_type', label: 'Type' },
-  { key: 'price', label: 'Price', sortBy: 'price', numeric: true },
-  { key: 'bedrooms', label: 'Bed', numeric: true },
-  { key: 'status', label: 'Status' },
-]
 
 const CELL = 'px-3 py-2 text-sm text-slate-700'
 
 /**
- * Deliberately not a generic `<DataTable>`. This is the first of the three list screens
- * (F4/F5/F6) and the only one that exists — the shared abstraction is worth extracting
- * once the second screen shows which parts are actually common, not guessed at from one.
+ * `created_at` is in the backend's sort whitelist but not on `BookingResponse`, so it is
+ * not offered here: a column header that reorders rows by a value the table cannot show
+ * looks like a bug from the outside.
  */
-export default function PropertyTable({ properties, sort, onSortChange }: PropertyTableProps) {
+export default function BookingTable({
+  bookings,
+  sort,
+  onSortChange,
+  showAgent,
+}: BookingTableProps) {
   const navigate = useNavigate()
   const active = readSort(sort)
 
+  const columns: { key: string; label: string; sortBy?: SortableField }[] = [
+    { key: 'property', label: 'Property' },
+    { key: 'client', label: 'Client' },
+    ...(showAgent ? [{ key: 'agent', label: 'Agent' }] : []),
+    { key: 'slot_time', label: 'Slot', sortBy: 'slot_time' },
+    { key: 'status', label: 'Status', sortBy: 'status' },
+    { key: 'actions', label: 'Actions' },
+  ]
+
   return (
-    // The design doc rules out a card layout below laptop width (§6), so a narrow screen
-    // scrolls the table sideways rather than getting a different, untested rendering.
     <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
       <table className="w-full min-w-[48rem] border-collapse">
         <thead className="border-b border-slate-200 bg-slate-50">
           <tr>
-            {COLUMNS.map((column) => {
+            {columns.map((column) => {
               const sortBy = column.sortBy
               const isActive = sortBy === active.field
               return (
@@ -46,9 +52,7 @@ export default function PropertyTable({ properties, sort, onSortChange }: Proper
                   key={column.key}
                   scope="col"
                   aria-sort={sortBy ? (isActive ? ariaSort(active.direction) : 'none') : undefined}
-                  className={`px-3 py-2 text-xs font-semibold tracking-wide text-slate-600 uppercase ${
-                    column.numeric ? 'text-right' : 'text-left'
-                  }`}
+                  className="px-3 py-2 text-left text-xs font-semibold tracking-wide text-slate-600 uppercase"
                 >
                   {sortBy ? (
                     <button
@@ -73,34 +77,37 @@ export default function PropertyTable({ properties, sort, onSortChange }: Proper
         </thead>
 
         <tbody className="divide-y divide-slate-100">
-          {properties.map((property) => (
+          {bookings.map((booking) => (
             <tr
-              key={property.id}
-              // Convenience only. The title cell is a real link, so the row is reachable
-              // by keyboard and announced as navigation without this handler.
+              key={booking.booking_id}
+              // Convenience only — the property cell is a real link, so the row is
+              // keyboard-reachable without this. The guard covers the cancel button and
+              // its `<dialog>`, both of which live inside this row: without it, clicking
+              // "Keep booking" would dismiss the modal *and* navigate away.
               onClick={(event) => {
-                if (event.target instanceof HTMLElement && event.target.closest('a')) return
-                void navigate(`/properties/${property.id}`)
+                if (event.target instanceof HTMLElement && event.target.closest('a, button, dialog')) {
+                  return
+                }
+                void navigate(`/bookings/${booking.booking_id}`)
               }}
               className="cursor-pointer hover:bg-slate-50"
             >
               <td className={CELL}>
                 <Link
-                  to={`/properties/${property.id}`}
+                  to={`/bookings/${booking.booking_id}`}
                   className="font-medium text-blue-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
                 >
-                  {property.title}
+                  {booking.property_title}
                 </Link>
-                <span className="block text-xs text-slate-500">{property.address}</span>
               </td>
-              <td className={CELL}>{property.city}</td>
-              <td className={CELL}>{PROPERTY_TYPE_LABELS[property.property_type]}</td>
-              <td className={`${CELL} text-right whitespace-nowrap`}>
-                {formatPrice(property.price, property.currency, property.price_unit)}
-              </td>
-              <td className={`${CELL} text-right`}>{property.bedrooms}</td>
+              <td className={CELL}>{booking.client_name}</td>
+              {showAgent ? <td className={CELL}>{booking.agent_name}</td> : null}
+              <td className={`${CELL} whitespace-nowrap`}>{formatSlotTime(booking.slot_time)}</td>
               <td className={CELL}>
-                <StatusBadge status={property.status} />
+                <StatusBadge status={booking.status} />
+              </td>
+              <td className={CELL}>
+                <CancelBookingButton booking={booking} compact />
               </td>
             </tr>
           ))}

@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate, type RouteObject } from 'react-router'
 
 import AppLayout from '@/components/layout/AppLayout'
 import RoleGate from '@/components/ui/RoleGate'
+import BookingDetailPage from '@/routes/BookingDetailPage'
 import BookingsPage from '@/routes/BookingsPage'
 import HomePage from '@/routes/HomePage'
 import LoginPage from '@/routes/LoginPage'
@@ -34,6 +35,7 @@ export const routes: RouteObject[] = [
       { path: '/properties/new', element: <PropertyCreatePage /> },
       { path: '/properties/:propertyId', element: <PropertyDetailPage /> },
       { path: '/bookings', element: <BookingsPage /> },
+      { path: '/bookings/:bookingId', element: <BookingDetailPage /> },
       {
         path: USERS_PATH,
         element: (
