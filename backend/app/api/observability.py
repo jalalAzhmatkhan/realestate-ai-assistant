@@ -76,9 +76,12 @@ class _NullsLastColumn:
     ``column.desc()``/``column.asc()`` calls both land on ``NULLS LAST``.
 
     SQLite and PostgreSQL disagree on where a bare ``ORDER BY`` puts ``NULL`` (first vs.
-    last) — ``FaithfulnessCheck.score`` is the only nullable sort column anywhere in the
-    API (decision 6(5)), so this stays local rather than widening the shared
-    ``app/api/pagination.py`` helper for one caller.
+    last). Decision 6(5) calls out ``FaithfulnessCheck.score`` as the one nullable sort
+    column that needs this — that undersold it: ``RetrievalLog.top_score`` (null on an
+    empty-results retrieval) and ``RetrievalEvalRun.mrr`` (null on a failed or
+    all-negative-tier run) are nullable and in their own sort whitelists too. All three
+    wrap here rather than widening the shared ``app/api/pagination.py`` helper, which
+    every other (non-nullable) list endpoint still uses unchanged.
     """
 
     def __init__(self, column) -> None:
@@ -104,7 +107,10 @@ def _answer_preview(db: DbSession, message_id: str) -> str:
 
 RETRIEVAL_LOG_SORT_COLUMNS = {
     "created_at": col(RetrievalLog.created_at),
-    "top_score": col(RetrievalLog.top_score),
+    # Nullable (null when a query returned nothing) — same NULLS LAST reasoning as
+    # FaithfulnessCheck.score below, and the same exposure: SQLite and PostgreSQL
+    # disagree on default null placement.
+    "top_score": _NullsLastColumn(col(RetrievalLog.top_score)),
     "result_count": col(RetrievalLog.result_count),
 }
 
@@ -160,7 +166,9 @@ def list_retrieval_logs(
 
 EVAL_RUN_SORT_COLUMNS = {
     "created_at": col(RetrievalEvalRun.created_at),
-    "mrr": col(RetrievalEvalRun.mrr),
+    # Nullable (null on a failed run, or a run with no graded cases) — NULLS LAST for
+    # the same reason as RetrievalLog.top_score above.
+    "mrr": _NullsLastColumn(col(RetrievalEvalRun.mrr)),
 }
 
 
