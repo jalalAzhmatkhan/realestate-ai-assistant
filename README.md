@@ -78,7 +78,7 @@ at startup instead of inserting into tables that were never created.
 |---|---|---|---|
 | `APP_ENV` | no | `dev` | `dev`/`prod`, controls log format and docs exposure |
 | `LOG_LEVEL` | no | `INFO` | Python logging level |
-| `DATABASE_URL` | no | `sqlite:///./app.db` | SQLModel/SQLAlchemy connection string; swap to a Postgres DSN with no code changes |
+| `DATABASE_URL` | no [^db-url-transitional] | `postgresql+psycopg://realestate:realestate-dev-only@localhost:5432/realestate` | **Postgres required** — pgvector backs the FAQ index (Design Decisions §6). SQLite is not a supported runtime |
 | `SEED_DATA_DIR` | no | `./seed_data` | Where the seed loader reads JSON from, resolved relative to the process working directory (`backend/`) — i.e. `backend/seed_data/` from the repo root |
 | `SEED_ON_STARTUP` | no | `true` | Load seed data into an empty DB on boot |
 | `JWT_SECRET_KEY` | **yes** | — | Signing secret for locally-issued JWTs |
@@ -96,9 +96,18 @@ at startup instead of inserting into tables that were never created.
 | `LOCAL_EMBEDDING_MODEL` | no | `sentence-transformers/all-MiniLM-L6-v2` | Used only when `EMBEDDING_PROVIDER=local` |
 | `RAG_TOP_K` | no | `3` | Default number of chunks `search_faq` retrieves |
 | `RAG_MIN_SCORE` | no | `0.55` | Cosine-similarity floor below which `search_faq` reports "no relevant answer" instead of forcing a low-confidence answer |
+| `RAG_INDEX_ON_STARTUP` | no | `true` | Run the idempotent FAQ reindex during app startup. No-op and no embedding calls when the index is current |
 | `DEFAULT_PAGE_SIZE` | no | `20` | Default `page_size` for list endpoints |
 | `MAX_PAGE_SIZE` | no | `100` | Hard ceiling for `page_size`; larger values are rejected (422), not silently clamped |
 | `CORS_ALLOWED_ORIGINS` | no | `*` (dev only) | Comma-separated origins; must be an explicit origin list (not `*`) for the cookie-authenticated admin SPA |
+
+[^db-url-transitional]: As of B31 (pgvector infrastructure — this task), `Settings.database_url`'s
+  code default has **not** been flipped yet and is still `sqlite:///./app.db`; only `docker-compose.yml`'s
+  `postgres` service image, the `pgvector` dependency, and `RAG_INDEX_ON_STARTUP` land in this task. The
+  row above documents the target state once B32 (`faq_embeddings` schema + Alembic migration, which is
+  what actually makes `CREATE EXTENSION vector` run and makes SQLite fail `alembic upgrade head`) lands —
+  see `Documentation/audits/2026-08-06-pgvector-migration-contract.md`. B31–B33 are a hard gate sequenced
+  together, so this is transitional only for the span of that sequence.
 
 `.env.example` (to be created by the Backend Engineer alongside implementation, at `backend/.env.example`)
 should enumerate all of the above with safe dev defaults and empty API key placeholders.
@@ -315,31 +324,88 @@ collapsing the network hop into an in-process call does not relax the trust boun
 
 ### 6. RAG approach for `search_faq`
 
-Chosen: an **in-process flat vector index** (`app/rag/index.py`) — embeddings for the ~12–15 seed FAQ
-entries are computed once at startup (or lazily, cached) via the configured `EMBEDDING_PROVIDER`, held
-as a small in-memory NumPy array, and queried with cosine similarity. `EMBEDDING_PROVIDER` is
-**intentionally decoupled from `LLM_PROVIDER`**: Anthropic has no embeddings API, so if
-`LLM_PROVIDER=anthropic`, embeddings still need to come from `openai`, `gemini`, or a local
-`sentence-transformers` model (`EMBEDDING_PROVIDER=local`, the zero-API-key default so the project runs
-fully offline for FAQ search out of the box).
+Chosen: **pgvector**. FAQ entries from `backend/seed_data/faq.json` are embedded once by an explicit
+indexing step and stored in a `faq_embeddings` table with a `vector` column; `search_faq` retrieves via a
+cosine-distance query (`<=>`) rather than an in-process similarity scan. Specified in
+`Documentation/audits/2026-08-06-rag-observability-and-faithfulness.md` decision 1, which supersedes the
+in-process NumPy index this section previously described.
 
-Trade-off: no FAISS/Chroma/pgvector dependency, no extra infra, trivial to reason about and unit-test
-at 15 rows — but it is an O(n) linear scan with no persistence beyond the process (rebuilt from
-`backend/seed_data/faq.json` on startup) and would not scale past a few thousand documents or multiple
-instances sharing an index. Production upgrade path (already the target design in
-`core components.md` §2/§3): move the index into pgvector or a dedicated vector DB behind a Knowledge
-Base service, so embeddings are computed once centrally and shared across all Agent Orchestrator
-instances instead of recomputed per process.
+`EMBEDDING_PROVIDER` remains **intentionally decoupled from `LLM_PROVIDER`**: Anthropic has no embeddings
+API, so with `LLM_PROVIDER=anthropic` embeddings still come from `openai`, `gemini`, or a local
+`sentence-transformers` model (`EMBEDDING_PROVIDER=local`, the zero-API-key default).
+
+**Dimensionality.** The three providers emit different widths (local MiniLM-L6-v2 → 384,
+`text-embedding-004` → 768, `text-embedding-3-small` → 1536), so the column is declared `vector` with
+**no dimension modifier** and every row records the width it actually got. Application code never
+hardcodes a provider→dimension map — OpenAI's model accepts a `dimensions` parameter, so any such map is
+wrong the first time it is used. An `embedding_model` discriminator column scopes every query, so
+switching provider writes a new row set and leaves the old one intact: a provider switch is a re-run of
+the reindex, not a migration.
+
+**No ANN index (HNSW/IVFFlat), deliberately.** At this corpus size an exact scan is faster than any index
+— but the decisive reason is correctness, not speed: an approximate index would make the Recall@K/MRR
+evaluation measure the index's recall convolved with embedding quality, so the metric would stop
+measuring the thing it reports. Read that checkpoint's decision 3(e) before adding one.
+
+**Populating the index** is an explicit, idempotent step, not a migration and not a lazy first-request
+build:
+
+    uv run python -m app.rag.reindex          # embeds only what changed (sha256 of the embedded document)
+    uv run python -m app.rag.reindex --force  # re-embeds everything for the configured model
+
+`RAG_INDEX_ON_STARTUP` (default `true`) runs the same routine in the app lifespan, so
+`docker compose up` on a fresh volume yields a working FAQ path with no extra step; when the index is
+current it is a hash comparison and zero embedding calls. It is deliberately **not** part of
+`alembic upgrade head`: a migration must be deterministic and runnable without credentials, and embedding
+calls are neither.
+
+`backend/seed_data/faq.json` remains the source of truth for FAQ content; `faq_embeddings` is a derived
+cache that can be dropped and rebuilt at any time.
+
+**An empty index is an error, not an empty result.** If `faq_embeddings` holds no rows for the configured
+`embedding_model`, `search_faq` raises rather than returning `[]` — an empty result list is a
+*successful* "nothing matched confidently", so an unpopulated index would otherwise disable FAQ answering
+system-wide with nothing appearing broken. A populated index with no match above `RAG_MIN_SCORE` still
+returns `[]`, unchanged.
+
+Trade-off accepted: Postgres is now a hard runtime requirement (see §7), and there is a step between
+"schema exists" and "FAQ search works". In exchange, embeddings are computed once rather than per
+process, survive restarts, are inspectable with a SQL client without the app running, and the corpus is
+no longer bounded by what fits in every worker's memory.
+
+> **Implementation sequencing note (B31–B33).** This section describes the pgvector design in full, but
+> the `faq_embeddings` table, the Alembic migration, and the reindex command it describes are **not yet
+> implemented as of B31** (this task is infrastructure-only: the `pgvector/pgvector:pg16` image, the
+> `pgvector` Python dependency, and `RAG_INDEX_ON_STARTUP`). `app/rag/index.py` still runs the in-process
+> NumPy scan until B32 (schema/migration) and B33 (retrieval rewrite) land. See
+> `Documentation/audits/2026-08-06-pgvector-migration-contract.md` for the task breakdown; B31 → B32 → B33
+> is a hard gate sequenced together.
 
 ### 7. Persistence
 
-SQLModel over SQLite by default (`DATABASE_URL=sqlite:///./app.db`) — zero external infra for a solo
-dev to run the assessment, full ORM/type-safety via SQLModel, and a straight swap to a Postgres DSN
-with no code changes since SQLModel/SQLAlchemy is DB-agnostic outside of PostGIS-specific geo
-functions. Geo "near me" search in `search_property` uses a Haversine distance computed in Python over
-the (small) seeded dataset — explicitly **not** how this should work at scale; the documented
-production path is PostGIS `ST_DWithin`/`ST_Distance` once Property Service is extracted, per
-`core components.md`.
+PostgreSQL via SQLModel/SQLAlchemy (`DATABASE_URL=postgresql+psycopg://...`). **Postgres is required, not
+optional:** the FAQ index uses the pgvector extension (§6), so `CREATE EXTENSION vector` and a `vector`
+column are part of the schema and `alembic upgrade head` cannot run on SQLite. The shortest local path is
+`docker compose up -d postgres` (image `pgvector/pgvector:pg16`), then `alembic upgrade head`, then
+`uv run python -m app.rag.reindex`.
+
+SQLite is still used by the test suite for every table except `faq_embeddings`; retrieval tests and the
+migration-parity test run against real Postgres and are skipped with an explicit marker when it is
+unavailable, never silently passed. Agent and chat tests inject a stub retriever via
+`create_app(faq_index=...)` and need no vectors at all.
+
+Geo "near me" search in `search_property` still uses a Haversine distance computed in Python over the
+(small) seeded dataset — explicitly **not** how this should work at scale; the documented production path
+is PostGIS `ST_DWithin`/`ST_Distance`, which is now a smaller step than it was, since Postgres is already
+a hard dependency.
+
+> **Implementation sequencing note (B31–B33), same caveat as §6.** As of B31 (this task), Postgres is not
+> yet a hard runtime requirement in code — `Settings.database_url` still defaults to SQLite, and the
+> three-tier test strategy described above (SQLite for most tests, a stub retriever for agent/chat tests,
+> real Postgres for retrieval and migration-parity tests) applies once B32/B33 land the
+> `faq_embeddings` table and the pgvector-backed retrieval path. This section documents the target state
+> of the full B31–B33 sequence, applied here per the README patch mapping in
+> `Documentation/audits/2026-08-06-pgvector-migration-contract.md`.
 
 Schema is versioned with Alembic (`backend/alembic/`), not `SQLModel.metadata.create_all()` at app
 startup — `alembic upgrade head` is a separate, explicit step (local dev: run it yourself before

@@ -10,7 +10,15 @@
 # be reading your customized credentials.
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector/pgvector:pg16 (not postgres:16-alpine): the FAQ index migration (B32)
+    # issues `CREATE EXTENSION vector`, which the plain postgres image does not ship
+    # (fails with "could not open extension control file"). Same PG16 major as
+    # before, so the postgres_data volume survives with no dump/restore — just
+    # `docker compose --env-file backend/.env pull postgres` +
+    # `up -d --force-recreate postgres` on any machine that already has the old
+    # image cached. See Documentation/audits/2026-08-06-pgvector-migration-contract.md
+    # (B31) and 2026-08-06-rag-observability-and-faithfulness.md decision 1(a).
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-realestate}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-realestate-dev-only}

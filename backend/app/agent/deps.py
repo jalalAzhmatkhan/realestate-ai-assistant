@@ -12,14 +12,34 @@ AI run as ``deps=``. Two properties matter:
    (README Design Decisions §1).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlmodel import Session
 
 from app.core.config import Settings
 from app.models import User
 from app.notifications.port import NotificationPort
-from app.rag.index import FaqIndex
+from app.rag.index import FaqRetriever
+
+
+@dataclass(frozen=True)
+class RetrievalRecord:
+    """One ``search_faq`` call, captured in-run and persisted by the chat endpoint.
+
+    The tool writes nothing itself: the row it becomes references the assistant message,
+    which does not exist until the run is over.
+    """
+
+    query_text: str
+    requested_top_k: int
+    effective_top_k: int
+    min_score: float
+    # [{rank, faq_id, question, category, score}], rank 1-based, in rank order.
+    results: list[dict]
+    result_count: int
+    top_score: float | None
+    embedding_model: str
+    latency_ms: int
 
 
 @dataclass(frozen=True)
@@ -35,6 +55,10 @@ class AgentDeps:
     """The conversation this run belongs to. ``escalate_to_human`` ties its record to
     this, so a user cannot escalate a session that is not theirs."""
 
-    rag: FaqIndex
+    rag: FaqRetriever
     settings: Settings
     notifier: NotificationPort
+
+    retrieval_sink: list[RetrievalRecord] = field(default_factory=list)
+    """Append-only accumulator for this run's ``search_faq`` calls. Mutable contents on a
+    frozen dataclass is deliberate — the binding never changes, only what it collects."""

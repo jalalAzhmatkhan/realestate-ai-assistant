@@ -105,6 +105,11 @@ def test_defaults_match_readme_when_only_required_vars_are_set():
     assert settings.embedding_model == "sentence-transformers/all-MiniLM-L6-v2"
     assert settings.rag_top_k == 3
     assert settings.rag_min_score == 0.55
+    assert settings.retrieval_log_enabled is True
+    assert settings.faithfulness_check_enabled is True
+    assert settings.faithfulness_max_concurrent == 4
+    assert settings.faithfulness_max_claims == 20
+    assert settings.eval_set_max_cases == 60
     assert settings.default_page_size == 20
     assert settings.max_page_size == 100
 
@@ -265,6 +270,9 @@ def test_embedding_provider_rejects_unknown_value():
         ("rag_min_score", 1.1),
         ("default_page_size", 0),
         ("max_page_size", 0),
+        ("faithfulness_max_concurrent", 0),
+        ("faithfulness_max_claims", 0),
+        ("eval_set_max_cases", 0),
     ],
 )
 def test_out_of_range_numeric_settings_are_rejected(field, value):

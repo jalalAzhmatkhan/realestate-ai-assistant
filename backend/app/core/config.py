@@ -60,6 +60,22 @@ class Settings(BaseSettings):
     rag_top_k: int = Field(default=3, ge=1)
     rag_min_score: float = Field(default=0.55, ge=0.0, le=1.0)
 
+    # Runs the idempotent `app.rag.reindex` routine from the app lifespan (B32/B33),
+    # immediately after seed_if_empty. No-op and no embedding calls when the index is
+    # already current (hash comparison only). Read here ahead of the reindex command
+    # itself landing (B31 is infra-only) so the setting exists before it has a
+    # consumer — see Documentation/audits/2026-08-06-pgvector-migration-contract.md.
+    rag_index_on_startup: bool = True
+
+    # RAG observability. Both switches are off-by-absence-of-rows, never zeros: a
+    # disabled check writes nothing, so the admin page shows an empty state rather
+    # than a score that looks like a failing one.
+    retrieval_log_enabled: bool = True
+    faithfulness_check_enabled: bool = True
+    faithfulness_max_concurrent: int = Field(default=4, ge=1)
+    faithfulness_max_claims: int = Field(default=20, ge=1)
+    eval_set_max_cases: int = Field(default=60, ge=1)
+
     default_page_size: int = Field(default=20, ge=1)
     max_page_size: int = Field(default=100, ge=1)
 

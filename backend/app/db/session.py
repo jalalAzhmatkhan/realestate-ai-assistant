@@ -1,7 +1,7 @@
 from collections.abc import Generator
 
 from fastapi import Request
-from sqlalchemy import Engine, event
+from sqlalchemy import Engine, event, text
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.pool import ConnectionPoolEntry
 from sqlmodel import Session, SQLModel, create_engine
@@ -56,8 +56,28 @@ def create_tables(engine: Engine) -> None:
     on every test run (slow, and would test Alembic rather than application
     code). ``alembic/versions/``'s initial migration is verified to produce an
     identical schema to this function so the two cannot silently diverge.
+
+    ``faq_embeddings`` (B32) is excluded on SQLite: it needs pgvector's ``vector``
+    column type and ``CREATE EXTENSION vector``, neither of which SQLite has, and the
+    real migration is a deliberate no-op for this table on that dialect too (see
+    ``alembic/versions/5ca614128dea_...py`` and ``alembic/env.py``'s ``include_object``
+    filter) — so this mirrors that exclusion rather than silently diverging from it.
     """
-    SQLModel.metadata.create_all(engine)
+    if engine.dialect.name == "sqlite":
+        tables = [
+            table
+            for name, table in SQLModel.metadata.tables.items()
+            if name != "faq_embeddings"
+        ]
+        SQLModel.metadata.create_all(engine, tables=tables)
+    else:
+        # `faq_embeddings.embedding` is `vector`, which the `postgresql` dialect can only
+        # DDL-create once the extension exists — the real migration does the same
+        # `CREATE EXTENSION IF NOT EXISTS` before its own `create_table` (see
+        # `alembic/versions/5ca614128dea_...py`), so this mirrors that ordering.
+        with engine.begin() as connection:
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        SQLModel.metadata.create_all(engine)
 
 
 def get_session(request: Request) -> Generator[Session, None, None]:

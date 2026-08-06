@@ -34,11 +34,19 @@ def make_settings(**overrides) -> Settings:
     (e.g. docs_enabled, exception-envelope tests) don't also need to override
     it just to clear the prod-only length check — that check gets its own
     dedicated short-vs-long tests in test_config.py.
+
+    rag_index_on_startup defaults to False: the vast majority of tests that build a real
+    app via `create_app(settings)` have nothing to do with RAG, and most run against a
+    throwaway SQLite database, which never has a `faq_embeddings` table at all (B32) — a
+    True default here would make every one of those tests pay to load sentence-
+    transformers, then fail against a table that (correctly) does not exist. Tests that
+    specifically exercise the startup reindex override this explicitly.
     """
     values = {
         "jwt_secret_key": "test-secret-at-least-32-characters-long",
         "llm_provider": "openai",
         "cors_allowed_origins": "http://localhost:5173",
+        "rag_index_on_startup": False,
         **overrides,
     }
     return Settings(_env_file=None, **values)

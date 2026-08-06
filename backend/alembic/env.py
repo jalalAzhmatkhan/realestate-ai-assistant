@@ -64,6 +64,20 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _include_object(object, name, type_, reflected, compare_to) -> bool:
+    """Keeps ``faq_embeddings`` out of autogenerate/``alembic check`` comparisons on
+    SQLite, where the table (and its ``CREATE EXTENSION vector`` migration step) never
+    exists at all — without this, ``alembic check`` would see it as permanently "missing"
+    on the SQLite dev/test path and report perpetual drift. Postgres is unaffected: there
+    the table exists on both sides of the comparison, so nothing is excluded.
+    See Documentation/audits/2026-08-06-pgvector-migration-contract.md decision 1(f).
+    """
+    if context.get_bind().dialect.name == "postgresql":
+        return True
+    table_name = name if type_ == "table" else getattr(getattr(object, "table", None), "name", None)
+    return table_name != "faq_embeddings"
+
+
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode.
 
@@ -79,7 +93,9 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=_include_object,
         )
 
         with context.begin_transaction():
