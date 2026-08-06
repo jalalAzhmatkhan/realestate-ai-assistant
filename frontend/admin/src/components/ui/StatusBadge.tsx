@@ -1,8 +1,9 @@
 import { BOOKING_STATUS_LABELS, type BookingStatus } from '@/lib/bookings/types'
+import type { EvalRunStatus } from '@/lib/observability/types'
 import { PROPERTY_STATUS_LABELS, type PropertyStatus } from '@/lib/properties/types'
 import { USER_STATUS_LABELS, type UserStatus } from '@/lib/users/types'
 
-export type BadgeStatus = PropertyStatus | BookingStatus | UserStatus
+export type BadgeStatus = PropertyStatus | BookingStatus | UserStatus | EvalRunStatus
 
 /**
  * Colors are UI/UX §4's fixed mapping, which defines property and booking statuses in
@@ -28,12 +29,17 @@ const STYLES: Record<BadgeStatus, string> = {
   // Also outside §4's table. Grey, the same as `draft`: a disabled account is dormant
   // and reversible, not a failure — red would read as an error beside the green rows.
   disabled: 'bg-slate-100 text-slate-700 ring-slate-500/20',
+  // An eval run's `failed`, unlike `sold`/`cancelled` above, is a genuine error (the
+  // orchestration blew up mid-run — `502 eval_run_failed`), so it gets the saturated red
+  // an alert uses rather than the muted "terminal but not wrong" red those two share.
+  failed: 'bg-red-100 text-red-800 ring-red-600/20',
 }
 
 const LABELS: Record<BadgeStatus, string> = {
   ...PROPERTY_STATUS_LABELS,
   ...BOOKING_STATUS_LABELS,
   ...USER_STATUS_LABELS,
+  failed: 'Failed',
 }
 
 export default function StatusBadge({ status }: { status: BadgeStatus }) {

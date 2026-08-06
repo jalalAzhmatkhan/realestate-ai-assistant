@@ -28,6 +28,7 @@ describe('StatusBadge label mapping', () => {
     ['cancelled', 'Cancelled'],
     ['completed', 'Completed'],
     ['disabled', 'Disabled'],
+    ['failed', 'Failed'],
   ] as const)('renders %s as "%s"', (status, label) => {
     expect(renderBadge(status)).toHaveTextContent(label)
   })
@@ -74,6 +75,14 @@ describe('StatusBadge colour mapping', () => {
   it('paints a disabled account grey rather than red, since it is dormant not failed', () => {
     expect(familyOf('disabled')).toBe('slate')
     expect(familyOf('disabled')).toBe(familyOf('draft'))
+  })
+
+  it('paints a failed eval run a saturated red, distinct from the muted terminal red', () => {
+    expect(familyOf('failed')).toBe('red')
+    // Same colour family as `sold`/`cancelled`, but a different shade (bg-red-100 vs
+    // bg-red-50) — `failed` is a genuine error, not a neutral terminal state.
+    expect(renderBadge('failed').className).toContain('bg-red-100')
+    expect(renderBadge('sold').className).toContain('bg-red-50')
   })
 
   it('always renders the label as text, never colour alone (UI/UX §6)', () => {
