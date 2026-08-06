@@ -1,0 +1,227 @@
+{
+  "version": "2026-08-06.1",
+  "cases": [
+    {
+      "id": "eval-001",
+      "tier": "paraphrase",
+      "query": "what papers do I have to bring to rent a place",
+      "expected_faq_ids": ["faq-001"]
+    },
+    {
+      "id": "eval-002",
+      "tier": "paraphrase",
+      "query": "as a tenant applicant, which paperwork will be required of me",
+      "expected_faq_ids": ["faq-001"]
+    },
+    {
+      "id": "eval-003",
+      "tier": "paraphrase",
+      "query": "which paperwork is required when purchasing real estate",
+      "expected_faq_ids": ["faq-002"]
+    },
+    {
+      "id": "eval-004",
+      "tier": "paraphrase",
+      "query": "before buying a house here, what proof or ID must I show",
+      "expected_faq_ids": ["faq-002"]
+    },
+    {
+      "id": "eval-005",
+      "tier": "paraphrase",
+      "query": "what's the typical upfront deposit amount when renting",
+      "expected_faq_ids": ["faq-003"]
+    },
+    {
+      "id": "eval-006",
+      "tier": "paraphrase",
+      "query": "how many months of rent should I expect to pay as a security hold",
+      "expected_faq_ids": ["faq-003"]
+    },
+    {
+      "id": "eval-007",
+      "tier": "paraphrase",
+      "query": "can tenants keep a dog or cat in their rented unit",
+      "expected_faq_ids": ["faq-004"]
+    },
+    {
+      "id": "eval-008",
+      "tier": "paraphrase",
+      "query": "is bringing an animal companion permitted in leased homes",
+      "expected_faq_ids": ["faq-004"]
+    },
+    {
+      "id": "eval-009",
+      "tier": "paraphrase",
+      "query": "is it possible to change the time of a property tour I already booked",
+      "expected_faq_ids": ["faq-005"]
+    },
+    {
+      "id": "eval-010",
+      "tier": "paraphrase",
+      "query": "what happens if I want to call off a home showing appointment",
+      "expected_faq_ids": ["faq-005"]
+    },
+    {
+      "id": "eval-011",
+      "tier": "paraphrase",
+      "query": "during which times of day can I tour a listed property",
+      "expected_faq_ids": ["faq-006"]
+    },
+    {
+      "id": "eval-012",
+      "tier": "paraphrase",
+      "query": "when are agents typically available to show homes",
+      "expected_faq_ids": ["faq-006"]
+    },
+    {
+      "id": "eval-013",
+      "tier": "paraphrase",
+      "query": "walk me through the steps to apply for a leased unit",
+      "expected_faq_ids": ["faq-007"]
+    },
+    {
+      "id": "eval-014",
+      "tier": "paraphrase",
+      "query": "how does someone go from finding a listing to signing a lease",
+      "expected_faq_ids": ["faq-007"]
+    },
+    {
+      "id": "eval-015",
+      "tier": "paraphrase",
+      "query": "do clients get charged anything just to browse listings here",
+      "expected_faq_ids": ["faq-008"]
+    },
+    {
+      "id": "eval-016",
+      "tier": "paraphrase",
+      "query": "is there a cost to search for homes through this service",
+      "expected_faq_ids": ["faq-008"]
+    },
+    {
+      "id": "eval-017",
+      "tier": "paraphrase",
+      "query": "how long does a typical rental contract usually last",
+      "expected_faq_ids": ["faq-009"]
+    },
+    {
+      "id": "eval-018",
+      "tier": "paraphrase",
+      "query": "is a shorter than one year lease ever available",
+      "expected_faq_ids": ["faq-009"]
+    },
+    {
+      "id": "eval-019",
+      "tier": "paraphrase",
+      "query": "if something breaks in my rented unit, who pays to fix it",
+      "expected_faq_ids": ["faq-010"]
+    },
+    {
+      "id": "eval-020",
+      "tier": "paraphrase",
+      "query": "does the landlord or the tenant handle a broken pipe",
+      "expected_faq_ids": ["faq-010"]
+    },
+    {
+      "id": "eval-021",
+      "tier": "paraphrase",
+      "query": "will I be billed separately for electricity and water",
+      "expected_faq_ids": ["faq-011"]
+    },
+    {
+      "id": "eval-022",
+      "tier": "paraphrase",
+      "query": "does the monthly rent cover internet and other services",
+      "expected_faq_ids": ["faq-011"]
+    },
+    {
+      "id": "eval-023",
+      "tier": "paraphrase",
+      "query": "can a tenant break their contract before it expires",
+      "expected_faq_ids": ["faq-012"]
+    },
+    {
+      "id": "eval-024",
+      "tier": "paraphrase",
+      "query": "what's the penalty for moving out ahead of schedule",
+      "expected_faq_ids": ["faq-012"]
+    },
+    {
+      "id": "eval-025",
+      "tier": "paraphrase",
+      "query": "is a backer required for someone applying without local credit history",
+      "expected_faq_ids": ["faq-013"]
+    },
+    {
+      "id": "eval-026",
+      "tier": "paraphrase",
+      "query": "will the landlord ask a friend or relative to vouch financially for me",
+      "expected_faq_ids": ["faq-013"]
+    },
+    {
+      "id": "eval-027",
+      "tier": "paraphrase",
+      "query": "can I pay my landlord in cash instead of transferring funds",
+      "expected_faq_ids": ["faq-014"]
+    },
+    {
+      "id": "eval-028",
+      "tier": "paraphrase",
+      "query": "which way of sending money is recommended for monthly payments",
+      "expected_faq_ids": ["faq-014"]
+    },
+    {
+      "id": "eval-029",
+      "tier": "paraphrase",
+      "query": "before applying, what paperwork should I have ready",
+      "expected_faq_ids": ["faq-001", "faq-002"]
+    },
+    {
+      "id": "eval-030",
+      "tier": "negative",
+      "query": "What's the weather forecast for Jakarta tomorrow?",
+      "expected_faq_ids": []
+    },
+    {
+      "id": "eval-031",
+      "tier": "negative",
+      "query": "How do I open a local bank account as a foreigner?",
+      "expected_faq_ids": []
+    },
+    {
+      "id": "eval-032",
+      "tier": "negative",
+      "query": "What's today's USD to IDR exchange rate?",
+      "expected_faq_ids": []
+    },
+    {
+      "id": "eval-033",
+      "tier": "negative",
+      "query": "Can you help me file my annual income tax return?",
+      "expected_faq_ids": []
+    },
+    {
+      "id": "eval-034",
+      "tier": "negative",
+      "query": "Do you sell homeowner's insurance policies?",
+      "expected_faq_ids": []
+    },
+    {
+      "id": "eval-035",
+      "tier": "negative",
+      "query": "Which neighborhood in Bali is best for digital nomads?",
+      "expected_faq_ids": []
+    },
+    {
+      "id": "eval-036",
+      "tier": "negative",
+      "query": "How do I apply for a local driving license?",
+      "expected_faq_ids": []
+    },
+    {
+      "id": "eval-037",
+      "tier": "negative",
+      "query": "Can I put my house up for public auction through you?",
+      "expected_faq_ids": []
+    }
+  ]
+}
