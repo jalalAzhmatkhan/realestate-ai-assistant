@@ -7,6 +7,8 @@ import HomePage from '@/routes/HomePage'
 import LoginPage from '@/routes/LoginPage'
 import NotFoundPage from '@/routes/NotFoundPage'
 import PropertiesPage from '@/routes/PropertiesPage'
+import PropertyCreatePage from '@/routes/PropertyCreatePage'
+import PropertyDetailPage from '@/routes/PropertyDetailPage'
 import UsersPage from '@/routes/UsersPage'
 import { LOGIN_PATH } from '@/lib/api/session'
 import type { NotAuthorizedState } from '@/lib/auth/routeState'
@@ -27,6 +29,10 @@ export const routes: RouteObject[] = [
     children: [
       { path: '/', element: <HomePage /> },
       { path: '/properties', element: <PropertiesPage /> },
+      // Listed before `:propertyId`, and a separate component, so creating never routes
+      // through the detail screen and fetches a listing with the id "new".
+      { path: '/properties/new', element: <PropertyCreatePage /> },
+      { path: '/properties/:propertyId', element: <PropertyDetailPage /> },
       { path: '/bookings', element: <BookingsPage /> },
       {
         path: USERS_PATH,
