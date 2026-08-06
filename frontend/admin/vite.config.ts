@@ -26,6 +26,12 @@ export default defineConfig({
     // a test-environment artifact with no browser equivalent, but one that would
     // block routing/RBAC tests outright. happy-dom ships a self-consistent set.
     environment: 'happy-dom',
+    // Every datetime the backend sends is a UTC instant that the app renders in the
+    // viewer's own timezone (src/lib/datetime.ts), so any test asserting a rendered time
+    // depends on the machine's zone. Pinned to the deployment's own so a developer in
+    // another timezone and CI agree — and so a shifted hour shows up as a failure here
+    // rather than as a missed viewing.
+    env: { TZ: 'Asia/Jakarta' },
     setupFiles: ['./src/test/setup.ts'],
     css: false,
     restoreMocks: true,

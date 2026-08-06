@@ -1,3 +1,4 @@
+import { formatSlotTime } from '@/lib/datetime'
 import Button from './Button'
 
 /**
@@ -8,7 +9,7 @@ import Button from './Button'
  */
 export interface AlternativeSlot {
   availability_slot_id: string
-  /** ISO-8601 with the listing's own UTC offset. */
+  /** ISO-8601 UTC instant, like every other datetime on the wire — see `lib/datetime.ts`. */
   slot_time: string
 }
 
@@ -64,29 +65,4 @@ export default function SuggestedAlternatives({
       )}
     </div>
   )
-}
-
-const DATE_FORMAT = new Intl.DateTimeFormat('en-GB', {
-  weekday: 'short',
-  day: 'numeric',
-  month: 'short',
-  timeZone: 'UTC',
-})
-
-/**
- * Renders the wall-clock time as written in the payload, deliberately *not* converted
- * to the viewer's timezone: the offset in `slot_time` is the listing's local time, and
- * an agent in another timezone reading "13:00" for a 10:00 viewing would be a booking
- * error, not a display quirk. Parsing the components out and formatting as UTC is what
- * pins the displayed value to the string.
- */
-function formatSlotTime(iso: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso)
-  if (!match) return iso
-
-  const [, year, month, day, hour, minute] = match
-  const wallClock = new Date(`${year}-${month}-${day}T${hour}:${minute}:00Z`)
-  if (Number.isNaN(wallClock.getTime())) return iso
-
-  return `${DATE_FORMAT.format(wallClock)} — ${hour}:${minute}`
 }
