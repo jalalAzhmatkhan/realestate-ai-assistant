@@ -23,6 +23,7 @@ from app.api.pagination import Page, PageParamsDep, paginate
 from app.booking.queries import (
     BookingFilters,
     apply_booking_filters,
+    resolve_booking_names,
     scoped_booking_query,
 )
 from app.booking.slots import BookingDomainError, cancel_booking, reschedule_booking
@@ -92,6 +93,12 @@ def _resolve_booking(db: Session, user: User, booking_id: str) -> Booking:
     return booking
 
 
+def _render(db: Session, booking: Booking) -> BookingResponse:
+    return BookingResponse.from_booking(
+        booking, resolve_booking_names(db, [booking])[booking.id]
+    )
+
+
 def _log(event: str, user: User, booking: Booking, **extra: Any) -> None:
     logger.info(
         event,
@@ -133,19 +140,31 @@ def list_bookings(
         ),
     )
 
-    page = paginate(
+    # No ``item_factory``: the names are resolved for the whole page in one batch (two
+    # queries), which a per-row factory cannot do since it never sees the page.
+    page: Page[Booking] = paginate(
         db,
         statement,
         params,
         sort_columns=BOOKING_SORT_COLUMNS,
         default_sort=DEFAULT_BOOKING_SORT,
-        item_factory=BookingResponse.from_booking,
     )
+    names = resolve_booking_names(db, page.results)
+
     logger.info(
         "bookings_listed",
         extra={"user_id": user.id, "role": user.role, "total": page.total},
     )
-    return page
+    return Page[BookingResponse](
+        results=[
+            BookingResponse.from_booking(booking, names[booking.id])
+            for booking in page.results
+        ],
+        page=page.page,
+        page_size=page.page_size,
+        total=page.total,
+        total_pages=page.total_pages,
+    )
 
 
 @router.get("/{booking_id}", response_model=BookingResponse)
@@ -159,7 +178,7 @@ def get_booking(booking_id: str, user: CurrentUser, db: DbSession) -> BookingRes
     booking = _resolve_booking(db, user, booking_id)
 
     _log("booking_read", user, booking)
-    return BookingResponse.from_booking(booking)
+    return _render(db, booking)
 
 
 @router.post("/{booking_id}/cancel", response_model=BookingResponse)
@@ -196,7 +215,7 @@ def cancel(
         )
 
     _log("booking_cancelled_via_rest", user, booking, already_cancelled=was_cancelled)
-    return BookingResponse.from_booking(booking)
+    return _render(db, booking)
 
 
 @router.post("/{booking_id}/reschedule", response_model=BookingRescheduleResponse)
@@ -242,4 +261,6 @@ def reschedule(
         moved,
         rescheduled_count=moved.rescheduled_count,
     )
-    return BookingRescheduleResponse.from_reschedule(moved, result.previous_slot_time)
+    return BookingRescheduleResponse.from_reschedule(
+        moved, resolve_booking_names(db, [moved])[moved.id], result.previous_slot_time
+    )

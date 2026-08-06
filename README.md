@@ -661,7 +661,10 @@ Response 200:
   "availability_slot_id": "avail-002",
   "status": "confirmed",
   "rescheduled_count": 1,
-  "updated_at": "2026-08-05T12:00:00+07:00"
+  "updated_at": "2026-08-05T12:00:00+07:00",
+  "property_title": "Modern 2BR Apartment near MRT Extension, Jakarta Selatan",
+  "client_name": "Andi Wijaya",
+  "agent_name": "Siti Rahayu"
 }
 ```
 
@@ -780,7 +783,25 @@ additive and breaks nothing.
 > endpoint, so under the old split the model would filter with one name and read results back under
 > another, inside the same context window. Nothing in the codebase should use bare `type`.
 
-**`GET /api/v1/bookings`** — item type: booking object (same fields as the reschedule response).
+**`GET /api/v1/bookings`** — item type: booking object (same fields as the reschedule response, minus
+`previous_slot_time`, which only means anything on a move):
+
+```
+{
+  "booking_id": "booking-001",
+  "property_id": "prop-001",
+  "client_id": "u-client-1",
+  "agent_id": "u-agent-1",
+  "slot_time": "2026-08-08T10:00:00+07:00",
+  "availability_slot_id": "avail-001",
+  "status": "confirmed",
+  "rescheduled_count": 0,
+  "updated_at": "2026-08-05T09:12:00+07:00",
+  "property_title": "Modern 2BR Apartment near MRT Extension, Jakarta Selatan",
+  "client_name": "Andi Wijaya",
+  "agent_name": "Siti Rahayu"
+}
+```
 
 | Filter | Type | Notes |
 |---|---|---|
@@ -794,6 +815,14 @@ Sort whitelist: `slot_time` (default `-slot_time`), `created_at`, `status`.
 RBAC scoping: `admin` -> all; `agent` -> `agent_id == user.id`; `client` -> `client_id == user.id`.
 This is the same scoping `reschedule_viewing` resolves bookings within, so what a user can see in the
 dashboard and what they can reschedule in chat are the same set by construction.
+
+> **`property_title`, `client_name`, and `agent_name` are denormalized onto every booking response**
+> (`Documentation/audits/2026-08-06-booking-response-name-denormalization.md`) — read at query time from
+> the referenced `Property`/`User` rows, never stored on the booking. The booking screens render names,
+> and `GET /api/v1/users/{id}` is admin-only, so an `agent` or `client` has no other way to resolve the
+> three ids; the frontend must not attempt a client-side join. All three are non-nullable (the ids are
+> required foreign keys) and appear on every endpoint returning a booking object: this list,
+> `GET /{id}`, `POST /{id}/cancel`, and `POST /{id}/reschedule`.
 
 **`GET /api/v1/users`** — item type: user object (`id`, `name`, `email`, `role`, `status`,
 `created_at`). Never includes `hashed_password`.
