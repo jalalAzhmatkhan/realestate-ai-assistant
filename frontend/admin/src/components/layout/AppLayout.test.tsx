@@ -47,6 +47,15 @@ describe('AppLayout', () => {
     expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument()
   })
 
+  it('still offers a way to end the session from the wrong-app screen', async () => {
+    // This screen renders before <TopBar>, so without its own logout affordance a
+    // client who signs in successfully would be stuck with a live session and no
+    // visible way to end it short of typing /login.
+    renderApp({ user: buildUser('client') })
+
+    expect(await screen.findByRole('button', { name: 'Log out' })).toBeVisible()
+  })
+
   it('holds a loading state while identity is in flight', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => undefined)))
     renderApp()

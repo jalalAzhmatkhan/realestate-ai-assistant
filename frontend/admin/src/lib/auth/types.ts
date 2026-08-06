@@ -27,8 +27,18 @@ export interface CurrentUser {
   session: CurrentUserSession
 }
 
-export function isRole(value: unknown): value is Role {
-  return typeof value === 'string' && (ROLES as readonly string[]).includes(value)
+/**
+ * Mirrors `POST /api/v1/auth/login` in browser mode (backend `app/schemas/auth.py`).
+ * `access_token` and `token_type` are null by design there — the credential is the
+ * httpOnly cookie, and returning the raw JWT as well would hand JavaScript exactly what
+ * httpOnly exists to withhold. `user` is `UserPublic`: no `status`, no `session`.
+ */
+export interface LoginResponse {
+  access_token: string | null
+  token_type: 'bearer' | null
+  expires_in: number
+  csrf_token: string | null
+  user: { id: string; name: string; email: string; role: Role }
 }
 
 export function isStaffRole(role: Role): boolean {

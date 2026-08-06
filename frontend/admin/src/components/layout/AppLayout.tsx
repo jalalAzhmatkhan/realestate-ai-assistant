@@ -1,10 +1,12 @@
 import { Outlet, useLocation } from 'react-router'
 
+import Button from '@/components/ui/Button'
 import ErrorState from '@/components/ui/ErrorState'
 import LoadingState from '@/components/ui/LoadingState'
 import { readNotAuthorized } from '@/lib/auth/routeState'
 import { isStaffRole } from '@/lib/auth/types'
 import { useCurrentUser } from '@/lib/auth/useCurrentUser'
+import { useLogout } from '@/lib/auth/useLogout'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 
@@ -48,14 +50,19 @@ export default function AppLayout() {
     // (README, `session_revoked`), so a non-active status reaching this render at all
     // means something upstream didn't catch it — fail to the same safe screen rather
     // than trust the role check alone (CLAUDE.md's "defense in depth" for RBAC).
+    //
+    // This screen still needs its own way out: it renders before <TopBar>, so without a
+    // logout action here a client (or a disabled staff account) who successfully signs
+    // in lands with a live session and no visible way to end it short of typing /login.
     return (
       <main className="flex min-h-screen items-center justify-center p-6">
-        <div className="max-w-sm space-y-2 text-center">
+        <div className="max-w-sm space-y-3 text-center">
           <h1 className="text-xl font-semibold text-slate-900">Real Estate Admin</h1>
           <p className="text-sm text-slate-500">
             This dashboard is for staff. If you are looking for properties or a viewing,
             use the chat assistant.
           </p>
+          <WrongAppLogout />
         </div>
       </main>
     )
@@ -78,6 +85,23 @@ export default function AppLayout() {
           <Outlet />
         </main>
       </div>
+    </div>
+  )
+}
+
+function WrongAppLogout() {
+  const logout = useLogout()
+
+  return (
+    <div className="space-y-1">
+      <Button variant="secondary" onClick={() => logout.mutate()} disabled={logout.isPending}>
+        {logout.isPending ? 'Logging out…' : 'Log out'}
+      </Button>
+      {logout.isError ? (
+        <p role="alert" className="text-sm text-red-700">
+          Could not log you out. Please try again.
+        </p>
+      ) : null}
     </div>
   )
 }
