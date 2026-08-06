@@ -22,9 +22,10 @@ describe('AppLayout', () => {
     expect(screen.getByRole('link', { name: 'Properties' })).toBeVisible()
     expect(screen.getByRole('link', { name: 'Bookings' })).toBeVisible()
     expect(screen.getByRole('link', { name: 'Users' })).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Chat Inspector' })).toBeVisible()
   })
 
-  it('does not render the Users nav item for an agent at all', async () => {
+  it('does not render the Users or Chat Inspector nav items for an agent at all', async () => {
     renderApp({ user: buildUser('agent') })
 
     await screen.findByRole('navigation', { name: 'Main' })
@@ -32,6 +33,7 @@ describe('AppLayout', () => {
     // `queryByRole`, not a visibility assertion: the requirement is that the link is
     // absent from the DOM, not merely hidden (frontend-engineer.md §2).
     expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Chat Inspector' })).not.toBeInTheDocument()
   })
 
   it('always shows which role the app is rendering as', async () => {

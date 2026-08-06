@@ -4,6 +4,7 @@ import AppLayout from '@/components/layout/AppLayout'
 import RoleGate from '@/components/ui/RoleGate'
 import BookingDetailPage from '@/routes/BookingDetailPage'
 import BookingsPage from '@/routes/BookingsPage'
+import ChatInspectorPage from '@/routes/ChatInspectorPage'
 import HomePage from '@/routes/HomePage'
 import LoginPage from '@/routes/LoginPage'
 import NotFoundPage from '@/routes/NotFoundPage'
@@ -15,6 +16,7 @@ import { LOGIN_PATH } from '@/lib/api/session'
 import type { NotAuthorizedState } from '@/lib/auth/routeState'
 
 const USERS_PATH = '/users'
+const CHAT_INSPECTOR_PATH = '/chat-inspector'
 
 /**
  * `/login` sits outside the shell; everything else renders inside it. The `<RoleGate>`
@@ -50,6 +52,23 @@ export const routes: RouteObject[] = [
             }
           >
             <UsersPage />
+          </RoleGate>
+        ),
+      },
+      {
+        path: CHAT_INSPECTOR_PATH,
+        element: (
+          <RoleGate
+            allow={['admin']}
+            fallback={
+              <Navigate
+                to="/"
+                replace
+                state={{ notAuthorized: CHAT_INSPECTOR_PATH } satisfies NotAuthorizedState}
+              />
+            }
+          >
+            <ChatInspectorPage />
           </RoleGate>
         ),
       },
