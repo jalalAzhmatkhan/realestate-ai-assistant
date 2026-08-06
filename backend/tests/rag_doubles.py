@@ -43,12 +43,16 @@ class InMemoryFaqIndex:
     def __init__(self, embedding_model, entries: list[FaqEntry]) -> None:
         self._embedding_model = embedding_model
         self._entries = entries
+        self._by_id = {entry.id: entry for entry in entries}
         self._vectors: np.ndarray | None = None
         self._lock = asyncio.Lock()
 
     @property
     def embedding_model_name(self) -> str:
         return self._embedding_model.model_name
+
+    def get(self, faq_id: str) -> FaqEntry | None:
+        return self._by_id.get(faq_id)
 
     async def _ensure_built(self) -> None:
         if self._vectors is not None or not self._entries:

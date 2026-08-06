@@ -31,9 +31,10 @@ from app.models import (
 )
 from app.observability import faithfulness
 from app.observability.faithfulness import ContextEntry, run_faithfulness_check
-from app.rag.index import FaqEntry, FaqIndex
+from app.rag.index import FaqEntry
 
 from .conftest import SEED_PASSWORD, make_db_settings
+from .rag_doubles import InMemoryFaqIndex
 from .test_agent import RecordingNotifier, StubEmbeddingModel
 from .test_chat_api import CHAT, CLIENT_EMAIL, LOGIN, scripted
 
@@ -101,7 +102,7 @@ def anyio_backend():
 
 @pytest.fixture
 def faq_index():
-    return FaqIndex(StubEmbeddingModel(), [DEPOSIT, PET])
+    return InMemoryFaqIndex(StubEmbeddingModel(), [DEPOSIT, PET])
 
 
 @pytest.fixture

@@ -47,7 +47,7 @@ from app.models import (
     FaithfulnessClaim,
     FaithfulnessStatus,
 )
-from app.rag.index import FaqIndex
+from app.rag.index import FaqRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +133,7 @@ class _Outcome:
     counts: dict[str, int] | None = None
 
 
-def collect_context(rag: FaqIndex, records: Iterable[RetrievalRecord]) -> list[ContextEntry]:
+def collect_context(rag: FaqRetriever, records: Iterable[RetrievalRecord]) -> list[ContextEntry]:
     """The deduplicated union of everything retrieved this turn, in first-seen order.
 
     A turn may call ``search_faq`` more than once; the reply is grounded in the union of
